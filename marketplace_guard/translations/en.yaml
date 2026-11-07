@@ -1,0 +1,131 @@
+configuration:
+  watch_paths:
+    name: Watched folders
+    description: >-
+      Folders monitored for newly added or changed components. Pick the standard folders here
+      (custom components and the HACS frontend); for a non-standard path use the YAML editor. A
+      component is scanned as soon as files inside it settle.
+  quarantine_dir:
+    name: Quarantine folder
+    description: >-
+      Where flagged components are MOVED to (never deleted). Home Assistant will not load anything
+      placed here. To restore a component, add it to the allowlist, move its folder back and restart.
+  quarantine_threshold:
+    name: Quarantine threshold
+    description: >-
+      Minimum verdict that triggers automatic quarantine of a new or changed component. "high" is
+      recommended; "critical" only quarantines known-malicious repositories; "medium" is stricter.
+  notify_threshold:
+    name: Notification threshold
+    description: >-
+      Minimum verdict that triggers a notification without quarantine (for verdicts below the
+      quarantine threshold).
+  notify_services:
+    name: Notification targets
+    description: >-
+      One or more targets. "persistent_notification" shows alerts in the Home Assistant UI. For push
+      messages add the name of a notify service, e.g. "mobile_app_<device>" (see Developer tools >
+      Actions, notify.*). A target Home Assistant does not have is skipped and named in the log; if
+      none is usable, alerts fall back to a persistent notification.
+  scan_python:
+    name: Scan Python
+    description: Run the Python heuristics (secret access, shell/exec, runtime downloads, obfuscation).
+  scan_js:
+    name: Scan JavaScript
+    description: Run the (lightweight) JavaScript heuristics for frontend plugins.
+  run_bandit:
+    name: Run bandit
+    description: Run the bandit static analyzer on Python code (shell/exec, pickle, weak crypto, ...).
+  run_pip_audit:
+    name: Run pip-audit
+    description: Check the component's manifest requirements against the known-vulnerability (CVE) database.
+  fetch_critical:
+    name: Check HACS critical list
+    description: >-
+      Also fetch the public HACS critical/removed list online (in addition to the locally cached
+      copy) to flag known-malicious repositories.
+  scan_on_start:
+    name: Scan on start
+    description: >-
+      Scan all existing components when the add-on starts. On the very first run they are recorded
+      as trusted (baseline) and never quarantined - only reported.
+  debounce_seconds:
+    name: Debounce (seconds)
+    description: >-
+      How long to wait after the last file change before scanning a component, so that a multi-file
+      install is scanned once it has finished writing.
+  request_file:
+    name: Repository pre-check file
+    description: >-
+      Text file watched for repository pre-checks. Write one GitHub URL per line; the repository is
+      downloaded to a temporary folder, scanned (not installed) and reported.
+  ha_storage:
+    name: Home Assistant .storage path
+    description: Path to the Home Assistant .storage folder (used for the HACS critical list and repo mapping).
+  ai_review:
+    name: AI second opinion
+    description: >-
+      Off by default. After the static scan, ask a Home Assistant AI Task to additionally judge the
+      component. Runs only for new/changed components and repository pre-checks, never during the
+      baseline scan. Needs an AI Task integration in Home Assistant. Privacy: the component's (public)
+      source code goes to the model behind the AI Task - with a cloud service it leaves your network.
+  ai_task_entity:
+    name: AI Task
+    description: >-
+      Entity id of the AI Task that performs the review, e.g. "ai_task.<name>". Leave empty to use the
+      AI Task entity Home Assistant prefers (set in Home Assistant's settings). The add-on log and the
+      status sensor's "ai_task_entities" attribute list the AI Task entities your Home Assistant has.
+  ai_can_quarantine:
+    name: Let AI trigger quarantine
+    description: >-
+      If enabled, an AI verdict of "malicious" raises the result to HIGH and can quarantine on its
+      own. Disabled by default - a malicious AI verdict is only reported, since small local models
+      can produce false positives.
+  ai_max_source_kb:
+    name: AI source limit (KB)
+    description: Maximum amount of source code sent to the AI Task, to bound context size and cost.
+  ai_timeout:
+    name: AI timeout (seconds)
+    description: How long to wait for the AI Task to respond before giving up for this component.
+  ai_task_entity_fallback:
+    name: AI Task fallback
+    description: >-
+      Optional second AI Task entity, used if the first one fails or does not exist (for example a
+      cloud task when a local model is busy). Leave empty for no fallback.
+  allowlist:
+    name: Allowlist
+    description: >-
+      Components or repositories that are always trusted and never quarantined (still scanned and
+      reported). Use the component folder name (e.g. "my_integration") or the GitHub "owner/repo". A
+      repository counts only for components HACS or the Marketplace installed (Home Assistant's own
+      records); for others, use the folder name.
+  rescan_interval_minutes:
+    name: Safety-net rescan (minutes)
+    description: >-
+      Periodically rescan all components to catch any file event the live watcher may have missed.
+      Set to 0 to disable.
+  max_repo_mb:
+    name: Repository pre-check size limit (MB)
+    description: Maximum download size for a repository pre-check, to guard against oversized archives.
+  status_sensor:
+    name: Status sensor
+    description: >-
+      Publish a status entity showing the number of quarantined components and the last result, so
+      you can put it on a dashboard.
+  status_entity:
+    name: Status sensor entity id
+    description: Entity id used for the status sensor (default sensor.marketplace_guard).
+  quarantine_updates:
+    name: Quarantine risky updates
+    description: >-
+      Also quarantine an update of an installed component when the update brings a risk at the
+      quarantine threshold that the version before did not have. Home Assistant's Marketplace loads a
+      new integration without a restart, but an update only after one, so this is where a quarantine
+      still comes first. The integration is missing after the next restart until you install a version
+      you trust. On by default; off: such an update is only reported.
+  restart_after_quarantine:
+    name: Restart after quarantining a running integration
+    description: >-
+      When a quarantined new integration is already running in Home Assistant (the Marketplace sets it
+      up without a restart), restart Home Assistant at once so it stops. Off: the notification asks you
+      to restart.

@@ -1,0 +1,6 @@
+build_from:
+  amd64: "ghcr.io/home-assistant/amd64-base-debian:trixie-2026.10.3"
+  aarch64: "ghcr.io/home-assistant/aarch64-base-debian:trixie-2026.10.3"
+  armv7: "ghcr.io/home-assistant/armv7-base-debian:bookworm-2025.11.1"
+labels:
+  io.hass.type: "addon"

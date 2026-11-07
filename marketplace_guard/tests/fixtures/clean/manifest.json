@@ -1,0 +1,9 @@
+{
+  "domain": "clean",
+  "name": "Clean Test",
+  "version": "1.2.0",
+  "documentation": "https://github.com/example/ha-clean",
+  "issue_tracker": "https://github.com/example/ha-clean/issues",
+  "requirements": [],
+  "codeowners": ["@example"]
+}

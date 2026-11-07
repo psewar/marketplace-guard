@@ -1,0 +1,131 @@
+configuration:
+  watch_paths:
+    name: Überwachte Ordner
+    description: >-
+      Ordner, die auf neu hinzugefügte oder geänderte Komponenten überwacht werden. Hier die
+      Standard-Ordner auswählen (custom_components und HACS-Frontend); für einen abweichenden Pfad den
+      YAML-Editor nutzen. Eine Komponente wird gescannt, sobald die Dateien darin „zur Ruhe gekommen" sind.
+  quarantine_dir:
+    name: Quarantäne-Ordner
+    description: >-
+      Wohin auffällige Komponenten VERSCHOBEN werden (nie gelöscht). Home Assistant lädt nichts, was
+      hier liegt. Zum Wiederherstellen in die Allowlist eintragen, den Ordner zurückschieben und neu starten.
+  quarantine_threshold:
+    name: Quarantäne-Schwelle
+    description: >-
+      Ab welchem Urteil eine neue/geänderte Komponente automatisch in Quarantäne kommt. Empfohlen ist
+      „high"; „critical" sperrt nur bekannt-bösartige Repos; „medium" ist strenger.
+  notify_threshold:
+    name: Benachrichtigungs-Schwelle
+    description: >-
+      Ab welchem Urteil benachrichtigt wird, ohne zu quarantänieren (für Urteile unterhalb der
+      Quarantäne-Schwelle).
+  notify_services:
+    name: Benachrichtigungs-Ziele
+    description: >-
+      Ein oder mehrere Ziele. „persistent_notification" zeigt Meldungen in der Home-Assistant-Oberfläche.
+      Für Push-Nachrichten den Namen eines notify-Dienstes eintragen, z. B. „mobile_app_<gerät>" (siehe
+      Entwicklerwerkzeuge > Aktionen, notify.*). Ein Ziel, das Home Assistant nicht kennt, wird
+      übersprungen und im Log genannt; ist keines nutzbar, kommen Meldungen als persistente Benachrichtigung.
+  scan_python:
+    name: Python scannen
+    description: Python-Heuristik ausführen (Secret-Zugriff, Shell/Exec, Laufzeit-Downloads, Obfuskation).
+  scan_js:
+    name: JavaScript scannen
+    description: Die (leichtgewichtige) JavaScript-Heuristik für Frontend-Plugins ausführen.
+  run_bandit:
+    name: bandit ausführen
+    description: Den statischen Analyzer bandit über den Python-Code laufen lassen (Shell/Exec, pickle, schwache Krypto, …).
+  run_pip_audit:
+    name: pip-audit ausführen
+    description: Die Manifest-Abhängigkeiten der Komponente gegen die Schwachstellen-Datenbank (CVE) prüfen.
+  fetch_critical:
+    name: HACS-Critical-Liste prüfen
+    description: >-
+      Zusätzlich die öffentliche HACS-Critical/Removed-Liste online abrufen (neben der lokal
+      zwischengespeicherten Kopie), um bekannt-bösartige Repos zu erkennen.
+  scan_on_start:
+    name: Beim Start scannen
+    description: >-
+      Beim Start des Add-ons alle vorhandenen Komponenten scannen. Beim allerersten Lauf werden sie
+      als vertraut hinterlegt (Baseline) und nie quarantäniert – nur gemeldet.
+  debounce_seconds:
+    name: Entprellung (Sekunden)
+    description: >-
+      Wie lange nach der letzten Dateiänderung gewartet wird, bevor gescannt wird – damit eine
+      Installation aus mehreren Dateien erst nach Abschluss einmal gescannt wird.
+  request_file:
+    name: Repo-Vorprüfungs-Datei
+    description: >-
+      Textdatei für Repository-Vorprüfungen. Eine GitHub-URL pro Zeile eintragen; das Repo wird in
+      einen temporären Ordner geladen, gescannt (nicht installiert) und gemeldet.
+  ha_storage:
+    name: Home-Assistant-.storage-Pfad
+    description: Pfad zum .storage-Ordner (für die HACS-Critical-Liste und die Repo-Zuordnung).
+  ai_review:
+    name: KI-Zweitmeinung
+    description: >-
+      Standardmäßig aus. Nach dem statischen Scan eine Home-Assistant-AI-Task zusätzlich urteilen lassen.
+      Läuft nur bei neuen/geänderten Komponenten und Repo-Vorprüfungen, nie beim Baseline-Scan. Braucht
+      eine AI-Task-Integration in Home Assistant. Datenschutz: der (öffentliche) Quellcode der Komponente
+      geht an das Modell hinter der AI-Task – bei einem Cloud-Dienst verlässt er dein Netz.
+  ai_task_entity:
+    name: AI-Task
+    description: >-
+      Entity-ID der AI-Task, die prüft, z. B. „ai_task.<name>". Leer lassen, um die AI-Task-Entität zu
+      nutzen, die Home Assistant bevorzugt (in den Einstellungen von Home Assistant festgelegt). Das
+      Add-on-Log und das Attribut „ai_task_entities" des Status-Sensors nennen die vorhandenen AI-Tasks.
+  ai_can_quarantine:
+    name: KI darf Quarantäne auslösen
+    description: >-
+      Wenn aktiviert, hebt ein KI-Urteil „malicious" das Ergebnis auf HIGH und kann allein
+      quarantänieren. Standardmäßig aus – ein „malicious"-KI-Urteil wird nur gemeldet, da kleine
+      lokale Modelle Fehlalarme erzeugen können.
+  ai_max_source_kb:
+    name: KI-Quellcode-Limit (KB)
+    description: Maximale Menge an Quellcode, die an die AI-Task geschickt wird (begrenzt Kontextgröße und Kosten).
+  ai_timeout:
+    name: KI-Timeout (Sekunden)
+    description: Wie lange auf die Antwort der AI-Task gewartet wird, bevor sie für diese Komponente übersprungen wird.
+  ai_task_entity_fallback:
+    name: KI-Task-Fallback
+    description: >-
+      Optionale zweite AI-Task-Entität, falls die erste fehlschlägt oder nicht existiert (z. B. eine
+      Cloud-Task, wenn ein lokales Modell belegt ist). Leer lassen für keinen Fallback.
+  allowlist:
+    name: Allowlist
+    description: >-
+      Komponenten oder Repositories, die immer vertraut und nie quarantäniert werden (werden weiterhin
+      gescannt und gemeldet). Ordnername der Komponente (z. B. „my_integration") oder GitHub „owner/repo".
+      Ein Repository zählt nur für Komponenten, die HACS oder der Marketplace installiert hat (die eigenen
+      Aufzeichnungen von Home Assistant); für andere den Ordnernamen nehmen.
+  rescan_interval_minutes:
+    name: Sicherheitsnetz-Rescan (Minuten)
+    description: >-
+      Scannt periodisch alle Komponenten, um Datei-Events zu erwischen, die der Live-Watcher evtl.
+      verpasst hat. 0 deaktiviert es.
+  max_repo_mb:
+    name: Repo-Vorprüfung Größenlimit (MB)
+    description: Maximale Download-Größe für eine Repo-Vorprüfung (Schutz vor überdimensionierten Archiven).
+  status_sensor:
+    name: Status-Sensor
+    description: >-
+      Veröffentlicht eine Status-Entität mit der Anzahl quarantänierter Komponenten und dem letzten
+      Ergebnis – für ein Dashboard.
+  status_entity:
+    name: Status-Sensor Entity-ID
+    description: Entity-ID für den Status-Sensor (Standard sensor.marketplace_guard).
+  quarantine_updates:
+    name: Riskante Updates quarantänieren
+    description: >-
+      Auch das Update einer installierten Komponente quarantänieren, wenn es ein Risiko auf
+      Quarantäne-Niveau mitbringt, das die Version davor nicht hatte. Der Marketplace von Home Assistant
+      lädt eine neue Integration ohne Neustart, ein Update aber erst nach einem; hier kommt eine
+      Quarantäne also noch zuerst. Nach dem nächsten Neustart fehlt die Integration, bis du eine Version
+      installierst, der du vertraust. Standardmäßig an; aus: ein solches Update wird nur gemeldet.
+  restart_after_quarantine:
+    name: Neustart nach Quarantäne einer laufenden Integration
+    description: >-
+      Läuft eine quarantänierte neue Integration schon in Home Assistant (der Marketplace richtet sie
+      ohne Neustart ein), Home Assistant sofort neu starten, damit sie stoppt. Aus: die Benachrichtigung
+      bittet dich um den Neustart.

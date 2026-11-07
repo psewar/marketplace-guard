@@ -1,0 +1,34 @@
+#include <tunables/global>
+
+profile marketplace_guard flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Receive supervision signals from the S6 tree
+  signal,
+
+  # The add-on needs to read all of /config (to scan components) and reach the network (PyPI advisory
+  # database, GitHub tarballs, the Supervisor API). AppArmor still confines the dangerous primitives:
+  # mounting, pivot_root, ptrace of other profiles, raw capabilities and kernel module loading remain
+  # denied by default.
+  file,
+  network,
+
+  # Executables: the s6-overlay init tree, shell, Python and the scanners in the virtual environment
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/local/bin/** ix,
+  /opt/venv/bin/** ix,
+  /command/** ix,
+  /package/** ix,
+  /etc/s6-overlay/** ix,
+  /run/{,**} rwk,
+
+  # Nothing runs from the folders Marketplace Guard scans or writes: a scanned component, a downloaded repository, a report
+  # or a code override can be read, never started as a program (ADR-0034). Python reads guard.py, it does not execute it.
+  deny /homeassistant/** x,
+  deny /config/** x,
+  deny /data/** x,
+  deny /share/** x,
+  deny /tmp/** x,
+}

@@ -1,0 +1,7 @@
+# The add-on repository: Home Assistant reads this file when the repository's URL is added under Settings ->
+# Add-ons -> Add-on Store -> (3 dots) -> Repositories; the add-on is in the folder "marketplace_guard".
+# url and maintainer name the publishing account. tools/publish.py fills them in, in the published copy only
+# (ADR-0013), so that this repository stays site-neutral (ADR-0011). See PUBLISHING.md.
+name: "Marketplace Guard"
+url: "https://github.com/psewar/marketplace-guard"
+maintainer: "psewar <psewar@users.noreply.github.com>"

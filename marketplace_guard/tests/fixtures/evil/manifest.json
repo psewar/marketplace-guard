@@ -1,0 +1,9 @@
+{
+  "domain": "evil",
+  "name": "Evil Test",
+  "version": "0.0.1",
+  "documentation": "https://github.com/test/test",
+  "issue_tracker": "https://github.com/test/test/issues",
+  "requirements": ["requests==2.19.0"],
+  "codeowners": ["@nobody"]
+}
