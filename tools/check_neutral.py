@@ -50,7 +50,8 @@ WSL_MOUNT = re.compile(r"/mnt/[a-z]/")
 # (ADR-0011). Listed are only forms that are neither an English word nor a standard German one.
 REGIONAL_SPELLING = re.compile(
     r"(?i)(?<!\w)(?:aussen\w*|ausser\w*|äusser\w*|grösse\w*|grösst\w*|heiss\w*|weiss|weisst|\w*schliess\w*|gemäss"
-    r"|\w*mässig\w*|massnahme\w*|massgeb\w*|strasse\w*|bloss|draussen|süss\w*|\w*fliess\w*|grüss\w*|gruss|spass)(?!\w)")
+    r"|\w*mässig\w*|massnahme\w*|massgeb\w*|strasse\w*|bloss|draussen|süss\w*|\w*fliess\w*|grüss\w*|gruss|spass"
+    r"|hiess\w*|liess\w*|\w*giess\w*|fussball\w*|\w*schiess\w*|stiess\w*)(?!\w)")
 
 
 def generic(line):

@@ -3,6 +3,7 @@
 Run from the add-on folder:  python3 -m unittest discover -s tests
 Stdlib only (no pytest / watchdog / HA needed).
 """
+import http.client
 import io
 import json
 import os
@@ -15,6 +16,7 @@ import time
 import tempfile
 import unittest
 import urllib.error
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import scanner  # noqa: E402
@@ -936,7 +938,7 @@ class GuardSandbox(unittest.TestCase):
         guard.TOKEN, guard.STATE_FILE = "test-token", os.path.join(d, "state.json")
         guard.ADDON_CONFIG = os.path.join(d, "addon_config")
         guard._ENV.update(ai=guard.ai_plan(self.opts, None), notify_skip=[], notify_problems=[])
-        self.calls, self.ai_answer = [], self.AI_ANSWER
+        self.calls, self.payloads, self.ai_answer = [], [], self.AI_ANSWER
         guard._ha_post, guard._ha_get = self.fake_post, self.fake_get
 
     def tearDown(self):
@@ -952,6 +954,7 @@ class GuardSandbox(unittest.TestCase):
 
     def fake_post(self, endpoint, payload, **kw):
         self.calls.append((endpoint, payload.get("title", ""), kw))
+        self.payloads.append((endpoint, payload))
         if endpoint.startswith("services/ai_task/"):
             if isinstance(self.ai_answer, Exception):
                 raise self.ai_answer
@@ -1112,6 +1115,306 @@ class TestWorker(GuardSandbox):
         w = self.worker({}, state_found="unreadable")
         w.tick()
         self.assertTrue(any("state lost" in t for t in self.titles()), self.titles())
+
+
+class TestWelcome(GuardSandbox):
+    """After the first start one summary replaces a notification per component of the baseline (ADR-0039)."""
+
+    SERVICES = [{"domain": "notify", "services": {"persistent_notification": {}, "send_message": {},
+                                                  "mobile_app_example_phone": {}}}]
+
+    def worker(self, state, **kw):
+        return guard.Worker(self.opts, state, [self.root], clock=lambda: 1000.0, core=lambda: True, **kw)
+
+    def messages(self):
+        return [(p["title"], p["message"]) for e, p in self.payloads if e.startswith("services/persistent_notification")]
+
+    def with_home_assistant(self, ai_entities=("ai_task.example",)):
+        def get(endpoint, timeout=20):
+            if endpoint == "services":
+                return self.SERVICES
+            return [{"entity_id": e} for e in ai_entities] if endpoint == "states" else []
+        guard._ha_get = get
+
+    def test_first_start_sends_one_summary_instead_of_one_notification_per_component(self):
+        self.component("risky_tool")
+        self.component("plain_tool", "X = 1\n")
+        self.worker({}).tick()
+        messages = self.messages()
+        self.assertEqual([t for t, _ in messages], ["Marketplace Guard is active"], messages)
+        body = messages[0][1]
+        self.assertIn("**2 components** were recorded as trusted", body)
+        self.assertIn("`risky_tool` (HIGH)", body)
+        self.assertNotIn("plain_tool", body)
+
+    def test_the_summary_names_this_home_assistants_notify_services_and_ai_task_entities(self):
+        self.with_home_assistant()
+        self.component("plain_tool", "X = 1\n")
+        self.worker({}).tick()
+        body = self.messages()[0][1]
+        self.assertIn("`mobile_app_example_phone`", body)
+        self.assertNotIn("send_message", body)
+        self.assertIn("**AI second opinion:** off. AI Task entities in Home Assistant: `ai_task.example`", body)
+        self.assertNotIn("Worth a look", body)
+
+    def test_with_push_targets_set_the_summary_says_where_alerts_go(self):
+        self.with_home_assistant(ai_entities=())
+        self.opts["notify_services"] = ["persistent_notification", "mobile_app_example_phone"]
+        self.worker({}).tick()
+        body = [m for t, m in self.messages() if t == "Marketplace Guard is active"][0]
+        self.assertIn("**Alerts** go to `mobile_app_example_phone`", body)
+        self.assertNotIn("AI second opinion", body)
+
+    def test_no_summary_after_the_first_start(self):
+        known = self.component("known", "X = 1\n")
+        self.worker({known: {"hash": guard.dir_hash(known), "verdict": "clean"}}).tick()
+        self.assertNotIn("Marketplace Guard is active", self.titles())
+
+    def test_no_summary_without_a_baseline_scan(self):
+        self.opts["scan_on_start"] = False
+        self.component("plain_tool", "X = 1\n")
+        self.worker({}).tick()
+        self.assertNotIn("Marketplace Guard is active", self.titles())
+
+    def test_a_lost_state_names_the_components_worth_a_look_and_sends_no_summary(self):
+        self.component("risky_tool")
+        self.worker({}, state_found="unreadable").tick()
+        messages = self.messages()
+        self.assertEqual(len(messages), 1, messages)
+        self.assertIn("state lost", messages[0][0])
+        self.assertIn("`risky_tool` (HIGH)", messages[0][1])
+
+    def test_components_worth_a_look_are_ordered_and_follow_the_notification_threshold(self):
+        state = {"/c/a": {"baseline": True, "verdict": "medium"}, "/c/b": {"baseline": True, "verdict": "critical"},
+                 "/c/c": {"baseline": True, "verdict": "low"}, "/c/d": {"baseline": False, "verdict": "high"},
+                 "_last_scan": {}}
+        self.assertEqual(guard.baseline_review(self.opts, state), [("b", "critical"), ("a", "medium")])
+        self.opts["notify_threshold"] = "high"
+        self.assertEqual(guard.baseline_review(self.opts, state), [("b", "critical")])
+
+    def test_the_status_sensor_lists_the_notify_services(self):
+        self.with_home_assistant()
+        self.opts["status_sensor"] = True
+        guard.refresh_environment(self.opts)
+        guard.update_status(self.opts, {})
+        attrs = [p["attributes"] for e, p in self.payloads if e == "states/sensor.marketplace_guard"][0]
+        self.assertEqual(attrs["notify_targets_available"], ["mobile_app_example_phone", "persistent_notification"])
+
+
+class TestPrecheckFromHomeAssistant(GuardSandbox):
+    """Pre-checks asked for through the action hassio.addon_stdin: bounded input, queued, run by the worker (ADR-0040)."""
+
+    def worker(self, state, **kw):
+        return guard.Worker(self.opts, state, [self.root], clock=lambda: 1000.0, core=lambda: self.answers, **kw)
+
+    def setUp(self):
+        super().setUp()
+        self.answers = True
+        self.ran, self.saved_precheck = [], guard.precheck_repo
+        guard.precheck_repo = lambda repo, opts, state: self.ran.append(repo)
+
+    def tearDown(self):
+        guard.precheck_repo = self.saved_precheck
+        super().tearDown()
+
+    def test_json_from_home_assistant_with_or_without_a_newline(self):
+        self.assertEqual(guard.parse_stdin(b'"owner/repo"'), ([("ok", "owner/repo")], b""))
+        self.assertEqual(guard.parse_stdin(b'"a/b""c/d"\n'), ([("ok", "a/b"), ("ok", "c/d")], b""))
+        self.assertEqual(guard.parse_stdin(b'["a/b", "c/d"]\n')[0], [("ok", "a/b"), ("ok", "c/d")])
+        self.assertEqual(guard.parse_stdin(b"owner/repo\n"), ([("ok", "owner/repo")], b""))
+
+    def test_an_incomplete_request_waits_for_the_rest(self):
+        entries, rest = guard.parse_stdin(b'"owner/re')
+        self.assertEqual((entries, rest), ([], b'"owner/re'))
+        self.assertEqual(guard.parse_stdin(rest + b'po"'), ([("ok", "owner/repo")], b""))
+
+    def test_requests_out_of_bounds_are_refused(self):
+        for raw in (b'"' + b"a" * 600 + b'"\n', b"[1, 2]\n", b'"broken\n',
+                    ("[" + ", ".join(f'"o/r{i}"' for i in range(11)) + "]\n").encode()):
+            with self.subTest(raw=raw[:30]):
+                entries, _ = guard.parse_stdin(raw)
+                self.assertEqual([k for k, _ in entries], ["refused"], entries)
+        entries, rest = guard.parse_stdin(b'"' + b"a" * 5000)
+        self.assertEqual(([k for k, _ in entries], rest), (["refused"], b""))
+
+    def test_a_mapping_is_refused_and_does_not_block_what_follows(self):
+        entries, rest = guard.parse_stdin(b'{"repository": "owner/repo"}"owner/next"')
+        self.assertEqual(entries, [("refused", "a request is a repository (owner/repo) or a list of them"),
+                                   ("ok", "owner/next")])
+        self.assertEqual(rest, b"")
+
+    def test_the_queue_takes_repositories_only_and_is_bounded(self):
+        w = self.worker({"x": {}})
+        self.assertEqual(w.request_precheck("https://github.com/owner/repo", "test"), ("queued", "owner/repo"))
+        self.assertEqual(w.request_precheck("owner/repo", "test"), ("queued", "owner/repo"))
+        self.assertEqual(w.prechecks, [("owner/repo", "test")])
+        self.assertEqual(w.request_precheck("restore evil_comp", "test")[0], "invalid")
+        for i in range(guard.PRECHECK_QUEUE_MAX - 1):
+            w.request_precheck(f"owner/r{i}", "test")
+        self.assertEqual(w.request_precheck("owner/one-more", "test")[0], "full")
+
+    def test_the_worker_runs_queued_prechecks(self):
+        known = self.component("known", "X = 1\n")
+        w = self.worker({known: {"hash": guard.dir_hash(known), "verdict": "clean"}})
+        w.request_precheck("owner/repo", "test")
+        w.tick()
+        self.assertEqual(self.ran, ["owner/repo"])
+        self.assertEqual(w.prechecks, [])
+
+    def test_on_the_first_start_prechecks_wait_for_the_baseline(self):
+        self.answers = False
+        w = self.worker({})
+        w.request_precheck("owner/repo", "test")
+        w.tick()
+        self.assertEqual(self.ran, [])
+        self.answers = True
+        w.tick()
+        self.assertEqual(self.ran, ["owner/repo"])
+
+    def test_stdin_reaches_the_queue_and_a_bad_request_is_reported(self):
+        w = self.worker({"x": {}})
+        r, wr = os.pipe()
+        os.write(wr, b'"owner/repo"')
+        os.write(wr, b'\nnot a repository\n')
+        os.close(wr)
+        guard.read_stdin(w, fd=r)  # returns at the end of the input
+        os.close(r)
+        self.assertEqual(w.prechecks, [("owner/repo", "Home Assistant")])
+        self.assertIn("Marketplace Guard - pre-check request not taken", self.titles())
+
+    def test_the_app_slug_comes_from_the_host_name(self):
+        self.assertEqual(guard.app_slug("a0d7b954-marketplace-guard"), "a0d7b954_marketplace_guard")
+        self.assertEqual(guard.app_slug("local-marketplace-guard"), "local_marketplace_guard")
+        self.assertIsNone(guard.app_slug("localhost"))
+
+    def test_the_summary_shows_the_action_with_the_slug(self):
+        title, body = guard.welcome_message(self.opts, {}, dict(guard._ENV, app_slug="local_marketplace_guard"))
+        self.assertIn("`hassio.addon_stdin` with `addon: local_marketplace_guard` and `input: owner/repo`", body)
+
+
+class TestWebPage(GuardSandbox):
+    """The web page in Home Assistant's sidebar: shows, takes pre-check and restore requests, decides nothing (ADR-0041)."""
+
+    def setUp(self):
+        super().setUp()
+        self.comp = self.component("evil_comp")
+        self.state = {}
+        guard.handle_component(self.comp, self.opts, self.state)  # quarantined
+        self.worker = guard.Worker(self.opts, self.state, [self.root], clock=lambda: 1000.0, core=lambda: True)
+        self.worker.started = True
+        self.worker.publish()
+        self.server = guard.start_web(self.worker, self.opts, host="127.0.0.1", port=0, peers=("127.0.0.1",))
+        self.port = self.server.server_address[1]
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        super().tearDown()
+
+    def request(self, method, path, form=None, headers=None, raw=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        body = raw if raw is not None else (urllib.parse.urlencode(form).encode() if form is not None else None)
+        conn.request(method, path, body=body, headers=dict({"Content-Type": "application/x-www-form-urlencoded"},
+                                                           **(headers or {})))
+        r = conn.getresponse()
+        out = (r.status, r.getheader("Location"), r.read().decode("utf-8"), r.getheader("Content-Security-Policy"))
+        conn.close()
+        return out
+
+    def token(self):
+        return re.search(r'name="token" value="([^"]+)"', self.request("GET", "/")[2]).group(1)
+
+    def item_id(self):
+        return self.worker.snapshot["quarantine"][0]["id"]
+
+    def test_the_page_shows_status_quarantine_and_the_form(self):
+        status, _, body, csp = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn("<code>evil_comp</code>", body)
+        self.assertIn('action="precheck"', body)
+        self.assertIn("default-src 'none'", csp)
+
+    def test_text_from_a_component_is_escaped(self):
+        view = dict(self.worker.snapshot, quarantine=[dict(self.worker.snapshot["quarantine"][0],
+                                                           name="<script>x</script>")])
+        body = guard.render_index(view, [], "t")
+        self.assertNotIn("<script>x", body)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", body)
+
+    def test_only_the_ingress_proxy_is_answered(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.server = guard.start_web(self.worker, self.opts, host="127.0.0.1", port=0, peers=("192.0.2.1",))
+        self.port = self.server.server_address[1]
+        self.assertEqual(self.request("GET", "/")[0], 403)
+        self.assertEqual(self.request("POST", "/precheck", {"repo": "owner/repo"})[0], 403)
+
+    def test_without_the_supervisors_address_the_page_does_not_start(self):
+        self.assertIsNone(guard.start_web(self.worker, self.opts, host="127.0.0.1", port=0, peers=()))
+
+    def test_only_listed_reports_are_shown(self):
+        name = next(n for n, _ in guard.web_reports(self.opts))
+        self.assertEqual(self.request("GET", "/report?f=" + urllib.parse.quote(name))[0], 200)
+        for bad in ("../state.json", "..%2Fstate.json", "nope.txt"):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.request("GET", "/report?f=" + bad)[0], 404)
+
+    def test_a_form_without_the_token_is_refused(self):
+        self.assertEqual(self.request("POST", "/precheck", {"repo": "owner/repo", "token": "wrong"})[0], 403)
+        self.assertEqual(self.worker.prechecks, [])
+
+    def test_a_request_over_the_size_limit_is_refused(self):
+        self.assertEqual(self.request("POST", "/precheck", raw=b"x" * (guard.WEB_MAX_BODY + 1))[0], 413)
+
+    def test_a_precheck_from_the_page_is_queued_and_its_note_shown(self):
+        status, location, _, _ = self.request("POST", "/precheck", {"repo": "https://github.com/owner/repo",
+                                                                     "token": self.token()})
+        self.assertEqual((status, location[:5]), (303, "./?m="))
+        self.assertEqual(self.worker.prechecks, [("owner/repo", "the web page")])
+        self.assertIn("owner/repo: pre-check queued", self.request("GET", "/" + location[2:])[2])
+
+    def test_a_restore_needs_the_name(self):
+        status, location, _, _ = self.request("POST", "/restore", {"id": self.item_id(), "name": "evil",
+                                                                    "token": self.token()})
+        self.assertEqual(status, 303)
+        self.assertTrue(location.startswith("restore?id="))
+        self.assertEqual(self.worker.restores, [])
+        self.assertTrue(os.path.exists(self.state[self.comp]["quarantined"]))
+
+    def test_a_restore_puts_the_copy_back_and_accepts_it(self):
+        status, location, _, _ = self.request("POST", "/restore", {"id": self.item_id(), "name": "evil_comp",
+                                                                    "token": self.token()},
+                                              headers={"X-Remote-User-Display-Name": "Example Admin"})
+        self.assertEqual((status, location[:5]), (303, "./?m="))
+        self.worker.tick()
+        self.assertTrue(os.path.isdir(self.comp))
+        self.assertFalse(os.path.exists(os.path.join(self.comp, "SCAN_REPORT.txt")))
+        entry = self.state[self.comp]
+        self.assertNotIn("quarantined", entry)
+        self.assertEqual(entry["restored"]["by"], "Example Admin")
+        self.assertIn("Marketplace Guard: evil_comp restored from quarantine", self.titles())
+        self.assertEqual(self.worker.snapshot["quarantine"], [])
+        guard.handle_component(self.comp, self.opts, self.state)  # the watcher sees it arrive: accepted, not moved
+        self.assertTrue(os.path.isdir(self.comp))
+        hash_before = self.state[self.comp]["hash"]
+        _write(self.comp, "extra.py", "X = 2\n")
+        guard.handle_component(self.comp, self.opts, self.state)  # a later change is scanned again
+        self.assertNotEqual(self.state.get(self.comp, {}).get("hash"), hash_before)
+
+    def test_a_restore_is_refused_when_it_cannot_be_done_safely(self):
+        key, entry = self.comp, self.state[self.comp]
+        os.makedirs(key)  # something is in its place already
+        self.assertEqual(guard.restore_from_quarantine(key, "evil_comp", "u", self.opts, self.state)[0], "refused")
+        os.rmdir(key)
+        elsewhere = os.path.join(self.tmp.name, "elsewhere", "evil_comp")
+        shutil.copytree(entry["quarantined"], elsewhere)
+        self.state[key] = dict(entry, quarantined=elsewhere)  # a copy outside the quarantine folder
+        self.assertEqual(guard.restore_from_quarantine(key, "evil_comp", "u", self.opts, self.state)[0], "refused")
+        self.state[key] = entry
+        outside = os.path.join(self.tmp.name, "not_watched", "evil_comp")
+        self.state[outside] = entry  # its original place is not a watched folder
+        self.assertEqual(guard.restore_from_quarantine(outside, "evil_comp", "u", self.opts, self.state)[0], "refused")
+        self.assertTrue(os.path.isdir(entry["quarantined"]))
 
 
 def _storage(dirpath, key, data):

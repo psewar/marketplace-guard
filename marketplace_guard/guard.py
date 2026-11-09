@@ -17,7 +17,7 @@ Safety principles:
 - Quarantine = MOVE (never delete) to the quarantine folder -> reversible.
 """
 import os, sys, json, time, shutil, io, re, tarfile, tempfile, threading, urllib.request, urllib.error, urllib.parse, hashlib, datetime
-import http.client, importlib.metadata, platform, secrets, socket
+import http.client, http.server, html, importlib.metadata, platform, secrets, socket
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scanner
@@ -180,7 +180,9 @@ def runtime_facts(installed):
 # ---------------------------------------------------------------- what this Home Assistant offers
 # Facts about the installation, refreshed at start and with every status heartbeat (refresh_environment):
 # the AI review plan and the notification targets to skip. The AI review, notify() and the status sensor read them.
-_ENV = {"ai": None, "notify_skip": [], "notify_problems": []}
+_ENV = {"ai": None, "notify_skip": [], "notify_problems": [], "notify_available": None}
+# notify services that cannot be a target here: they need an entity, not a title and a message
+NOT_A_TARGET = ("send_message",)
 NOTIFY_NAME = re.compile(r"^(notify\.)?[a-z0-9_]+$")
 PERSISTENT = ("persistent_notification", "persistent_notification.create")
 
@@ -236,7 +238,9 @@ def refresh_environment(opts):
             log(f"could not ask Home Assistant for AI Task entities and notify services: {e}")
     plan = ai_plan(opts, ai_entities)
     _, problems = notify_targets(opts.get("notify_services"), notify_available)
-    new = {"ai": plan, "notify_skip": [s for s, _ in problems], "notify_problems": [f"{s}: {why}" for s, why in problems]}
+    new = {"ai": plan, "notify_skip": [s for s, _ in problems], "notify_problems": [f"{s}: {why}" for s, why in problems],
+           "notify_available": None if notify_available is None
+           else sorted(s for s in notify_available if s not in NOT_A_TARGET)}
     if new == _ENV:
         return
     _ENV.update(new)
@@ -315,6 +319,8 @@ def update_status(opts, state, last=None):
         attrs["ai_review"] = _ENV["ai"]["state"]
         attrs["ai_task_entities"] = _ENV["ai"]["available"]
     attrs["notify_problems"] = _ENV["notify_problems"]
+    attrs["notify_targets_available"] = _ENV.get("notify_available") or []
+    attrs["app_slug"] = app_slug()  # for the action hassio.addon_stdin (ADR-0040)
     attrs["ai_review_pending"] = [os.path.basename(k) for k, v in state.items()
                                   if not k.startswith("_") and isinstance(v, dict) and v.get("ai_pending")][:50]
     attrs.update(_RUNTIME)
@@ -412,6 +418,53 @@ def md_code(text):
     code span: Home Assistant shows it as written, never as a link, an image or formatting (ADR-0032)."""
     t = " ".join(str(text).split()).replace("`", "'")
     return f"`{t}`" if t else ""
+
+
+def baseline_review(opts, state):
+    """The components recorded by the baseline whose verdict reaches the notification threshold, highest first:
+    [(folder name, verdict)]."""
+    rank = scanner.SEV_ORDER
+    low = rank.get(opts.get("notify_threshold"), rank["medium"])
+    found = [(os.path.basename(k), v["verdict"]) for k, v in state.items()
+             if not k.startswith("_") and isinstance(v, dict) and v.get("baseline") and v.get("verdict") in rank
+             and rank[v["verdict"]] >= low]
+    return sorted(found, key=lambda c: (-rank[c[1]], c[0]))
+
+
+def welcome_message(opts, state, env):
+    """The one notification after the first start (ADR-0039): what the baseline recorded, what is worth a look, and
+    what to set next, with the notify services and AI Task entities this Home Assistant has (env: _ENV)."""
+    trusted = [k for k, v in state.items() if not k.startswith("_") and isinstance(v, dict) and v.get("baseline")]
+    lines = [f"**{len(trusted)} components** were recorded as trusted (the baseline): they are never quarantined, "
+             "only reported. From now on, every component that is installed or changed is checked."]
+    review = baseline_review(opts, state)
+    if review:
+        shown = ", ".join(f"{md_code(n)} ({v.upper()})" for n, v in review[:10])
+        more = f" and {len(review) - 10} more" if len(review) > 10 else ""
+        reports = os.path.join(os.path.dirname(opts["request_file"]), "reports")
+        lines.append(f"**Worth a look:** {shown}{more}. Their reports are in {md_code(reports)}.")
+    targets = [s for s in opts.get("notify_services") or [] if s not in PERSISTENT]
+    available = [s for s in env.get("notify_available") or [] if s not in PERSISTENT]
+    if targets:
+        lines.append("**Alerts** go to " + ", ".join(md_code(s) for s in targets) + " and to Home Assistant.")
+    elif available:
+        lines.append("**Alerts on your phone:** add one of these notify services under *Notification targets* on the "
+                     "Configuration tab: " + ", ".join(md_code(s) for s in available[:10]) + ".")
+    plan = env.get("ai") or {}
+    entities = ", ".join(md_code(e) for e in plan.get("available") or [])
+    if plan.get("state") == "off" and entities:
+        lines.append(f"**AI second opinion:** off. AI Task entities in Home Assistant: {entities}; turn on *AI second "
+                     "opinion* to use one.")
+    elif plan.get("state") == "ready":
+        lines.append("**AI second opinion:** on.")
+    elif plan.get("state") in ("no_ai_task_entity", "entity_missing"):
+        lines.append("**AI second opinion:** on, but not usable yet; the app's log says what to set.")
+    slug = env.get("app_slug")
+    lines.append("**Before you install a repository**, check it first: run the action `hassio.addon_stdin` with "
+                 + (f"`addon: {slug}`" if slug else "this app's slug as `addon`")
+                 + f" and `input: owner/repo`, or write `owner/repo` into {md_code(opts['request_file'])}.")
+    lines.append("The app's Documentation tab explains everyday use and every option.")
+    return "Marketplace Guard is active", "\n\n".join(lines)
 
 
 def short(res, opts):
@@ -825,6 +878,45 @@ def quarantine(path, opts, report_text):
     return dest
 
 
+def restore_from_quarantine(key, typed, user, opts, state):
+    """Put a quarantined component back where it was and accept this copy as installed (ADR-0041): its hash is recorded
+    like a baseline entry, so it is not quarantined again for being back, while a later change is checked as an update.
+    key: the component's original path (its state key). Checks everything before it moves anything. Returns the outcome
+    as a fact: ("restored", name) | ("refused", reason)."""
+    entry = state.get(key)
+    if not (isinstance(entry, dict) and entry.get("quarantined")):
+        return "refused", "this component is not in quarantine"
+    name = os.path.basename(key.rstrip("/"))
+    if typed.strip() != name:
+        return "refused", f"the name typed is not {name}"
+    src = entry["quarantined"]
+    if (os.path.islink(src) or not os.path.isdir(src)
+            or os.path.dirname(os.path.realpath(src)) != os.path.realpath(opts["quarantine_dir"])):
+        return "refused", "its quarantined copy is not a folder in the quarantine folder"
+    if os.path.dirname(os.path.abspath(key)) not in {os.path.abspath(p) for p in opts["watch_paths"]}:
+        return "refused", "its original place is not a watched folder"
+    if os.path.lexists(key):
+        return "refused", f"{key} exists already"
+    report = os.path.join(src, "SCAN_REPORT.txt")
+    if os.path.isfile(report) and not os.path.islink(report):
+        os.remove(report)  # added by the quarantine; the same report is in the reports folder
+    shutil.move(src, key)
+    now = now_iso()
+    state[key] = {"hash": dir_hash(key), "hv": HASH_VERSION, "verdict": entry.get("verdict"),
+                  "full_name": entry.get("full_name"), "ts": now, "risk": entry.get("risk"),
+                  "restored": {"by": user, "ts": now}}
+    state["_last_scan"] = {"last_component": name, "last_verdict": entry.get("verdict"), "last_action": "restored",
+                           "last_scan_time": now}
+    save_state(state)
+    log(f"RESTORED from quarantine: {name} -> {key} (requested by {user} on the web page)")
+    notify(opts["notify_services"], f"Marketplace Guard: {name} restored from quarantine",
+           f"{md_code(name)} was put back to {md_code(key)} on the web page, requested by {md_code(user)}. Restart "
+           "Home Assistant to load it. This copy is accepted; a later change is checked as an update. If this was not "
+           "you: delete the folder before Home Assistant restarts, and check what else changed.", tag=name)
+    update_status(opts, state)
+    return "restored", name
+
+
 def decide_action(verdict, quarantine_threshold, notify_threshold, allowed, is_new, introduced=False,
                   quarantine_updates=False):
     """Pure quarantine/notify policy (no side effects, easy to test). Returns one of:
@@ -975,9 +1067,7 @@ def handle_component(path, opts, state, baseline=False):
 
     if baseline:
         log(f"baseline: {name} -> {verdict} (trusted, no quarantine)")
-        # On the baseline run, notify only on HIGH+ (otherwise every existing component would notify)
-        if rank[verdict] >= rank[opts["quarantine_threshold"]]:
-            notify(opts["notify_services"], f"Marketplace Guard - baseline {name}: {verdict.upper()} (trusted, please review)", short(res, opts), tag=name)
+        # No notification per component: the summary after the baseline names the ones worth a look (ADR-0039)
         save_state(state)
         return
 
@@ -1264,22 +1354,125 @@ def process_request_file(opts, state, between=None):
     for u in urls:
         if between:
             between()
-        res, err = scan_repo(u, opts)
-        if err:
-            log(f"pre-check error: {err}")
-            notify(opts["notify_services"], "Marketplace Guard - repository pre-check FAILED", md_code(err), tag="precheck")
+        precheck_repo(u, opts, state)
+
+
+def precheck_repo(url, opts, state):
+    """Pre-check one repository (download, scan, report, notify), from the request file or the queue of requests
+    from Home Assistant (ADR-0040). Nothing is installed."""
+    res, err = scan_repo(url, opts)
+    if err:
+        log(f"pre-check error: {err}")
+        notify(opts["notify_services"], "Marketplace Guard - repository pre-check FAILED", md_code(err), tag="precheck")
+        return
+    notes = "".join(f"\n{n}" for n in res.get("precheck_notes", []))
+    report = scanner.render_report(res) + notes + "\n"
+    write_report(opts, "PRECHECK_" + res["name"], report)
+    shown = "".join(f"\n{md_code(n)}" for n in res.get("precheck_notes", []))  # names a tag and folders
+    notify(opts["notify_services"], f"Marketplace Guard - repository {res['full_name']}: {res['verdict'].upper()}",
+           short(res, opts) + shown + "\n(Pre-check only - NOT installed in Home Assistant)", tag="precheck_" + res["name"])
+    log(f"repository pre-check: {res['full_name']} -> {res['verdict']}")
+    state["_last_scan"] = {"last_component": res["full_name"], "last_verdict": res["verdict"],
+                           "last_action": "pre-check", "last_scan_time": now_iso()}
+    save_state(state)
+    update_status(opts, state)
+
+
+# Pre-check requests from Home Assistant: its action hassio.addon_stdin writes to the app's stdin (ADR-0040). Anything
+# running in Home Assistant can call it, so it only ever asks for pre-checks, and it is bounded.
+STDIN_MAX_LINE = 512        # bytes of one request
+STDIN_MAX_ITEMS = 10        # repositories in one request (a JSON list)
+STDIN_MAX_PENDING = 4096    # bytes kept while waiting for the end of a request
+PRECHECK_QUEUE_MAX = 20     # repositories waiting for their pre-check
+
+
+def parse_stdin(buf):
+    """Split what arrived on stdin into requests (pure): ([("ok", text) | ("refused", reason)], rest).
+    Home Assistant's action sends its input as JSON, a string or a list of strings, with or without a newline; a plain
+    line is taken as it is. Complete lines are taken, then complete JSON values without a newline; rest is kept for the
+    next read."""
+    out = []
+    *lines, rest = buf.split(b"\n")
+    pending = []
+    while rest.lstrip()[:1] in (b'"', b"[", b"{"):  # the action's input is a string or a mapping, sent as JSON
+        text = rest.decode("utf-8", errors="replace").lstrip()
+        try:  # untrusted input: only parsing tells whether a JSON value is complete (no check beforehand exists)
+            _, end = json.JSONDecoder().raw_decode(text)
+        except ValueError:
+            break  # not complete yet: wait for more
+        pending.append(text[:end].encode())
+        rest = text[end:].encode()
+    if len(rest) > STDIN_MAX_PENDING:
+        out.append(("refused", f"input without an end ({len(rest)} bytes) dropped"))
+        rest = b""
+    for raw in lines + pending:
+        line = raw.strip()
+        if not line:
             continue
-        notes = "".join(f"\n{n}" for n in res.get("precheck_notes", []))
-        report = scanner.render_report(res) + notes + "\n"
-        write_report(opts, "PRECHECK_" + res["name"], report)
-        shown = "".join(f"\n{md_code(n)}" for n in res.get("precheck_notes", []))  # names a tag and folders
-        notify(opts["notify_services"], f"Marketplace Guard - repository {res['full_name']}: {res['verdict'].upper()}",
-               short(res, opts) + shown + "\n(Pre-check only - NOT installed in Home Assistant)", tag="precheck_" + res["name"])
-        log(f"repository pre-check: {res['full_name']} -> {res['verdict']}")
-        state["_last_scan"] = {"last_component": res["full_name"], "last_verdict": res["verdict"],
-                               "last_action": "pre-check", "last_scan_time": now_iso()}
-        save_state(state)
-        update_status(opts, state)
+        if len(line) > STDIN_MAX_LINE:
+            out.append(("refused", f"request longer than {STDIN_MAX_LINE} bytes"))
+            continue
+        text = line.decode("utf-8", errors="replace")
+        if text[:1] not in ('"', "[", "{"):
+            out.append(("ok", text))
+            continue
+        values = _json_values(text)
+        if values is None:
+            out.append(("refused", "request is not valid JSON"))
+            continue
+        for value in values:
+            items = value if isinstance(value, list) else [value]
+            if not all(isinstance(v, str) for v in items):
+                out.append(("refused", "a request is a repository (owner/repo) or a list of them"))
+            elif len(items) > STDIN_MAX_ITEMS:
+                out.append(("refused", f"more than {STDIN_MAX_ITEMS} repositories in one request"))
+            else:
+                out.extend(("ok", v) for v in items)
+    return out, rest
+
+
+def _json_values(text):
+    """The JSON values written one after another in text (Home Assistant may send two before a newline), or None when
+    text holds anything else (pure)."""
+    decoder, values, i = json.JSONDecoder(), [], 0
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+            continue
+        try:  # untrusted JSON: parsing is the check
+            value, i = decoder.raw_decode(text, i)
+        except ValueError:
+            return None
+        values.append(value)
+    return values
+
+
+def app_slug(hostname=None):
+    """This app's slug, which the action hassio.addon_stdin needs as `addon`. The Supervisor names an app's container
+    after its slug with "-" for "_"; None when the host name does not look like one."""
+    name = (hostname if hostname is not None else os.environ.get("HOSTNAME") or socket.gethostname()).strip().lower()
+    slug = name.replace("-", "_")
+    return slug if re.fullmatch(r"[a-z0-9]+_[a-z0-9_]+", slug) else None
+
+
+def read_stdin(worker, fd=0):
+    """Thread: hand pre-check requests from stdin to the worker until stdin ends. Decides nothing itself."""
+    buf = b""
+    while True:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError as e:  # stdin closed under us: a real fault, nothing more to read
+            log(f"stdin: {e}")
+            return
+        if not chunk:
+            return  # end of stdin
+        entries, buf = parse_stdin(buf + chunk)
+        for kind, text in entries:
+            result = worker.request_precheck(text, "Home Assistant") if kind == "ok" else ("refused", text)
+            if result[0] != "queued":
+                log(f"pre-check request from Home Assistant not taken: {result[1]}")
+                notify(worker.opts["notify_services"], "Marketplace Guard - pre-check request not taken",
+                       md_code(result[1]), tag="precheck_request")
 
 
 # ---------------------------------------------------------------- daemon (quarantine-on-write)
@@ -1312,6 +1505,9 @@ class Worker:
         self.clock, self.core = clock, core
         self.lock = threading.Lock()
         self.dirty, self.request_changed, self.started = {}, False, False
+        self.prechecks = []  # [(owner/repo, source)] asked for from Home Assistant, in order (ADR-0040)
+        self.restores = []   # [(state key, name typed, user)] asked for on the web page (ADR-0041)
+        self.snapshot = build_view(opts, state, 0)  # what the web page shows; replaced, never changed in place
         now = clock()
         self.core_deadline = now + CORE_WAIT_SECONDS
         self.last_rescan = self.last_status = now
@@ -1326,6 +1522,43 @@ class Worker:
     def mark_request(self):
         with self.lock:
             self.request_changed = True
+
+    def request_precheck(self, text, source):
+        """Queue a pre-check asked for outside the request file. Returns the outcome as a fact:
+        ("queued", "owner/repo") | ("invalid", reason) | ("full", reason)."""
+        parsed = repo_from_url(text)
+        if not parsed:
+            return "invalid", f"not a GitHub repository (owner/repo): {text[:100]}"
+        repo = f"{parsed[0]}/{parsed[1]}"
+        with self.lock:
+            if any(r == repo for r, _ in self.prechecks):
+                return "queued", repo
+            if len(self.prechecks) >= PRECHECK_QUEUE_MAX:
+                return "full", f"{PRECHECK_QUEUE_MAX} pre-checks are already waiting; {repo} was not added"
+            self.prechecks.append((repo, source))
+        log(f"pre-check of {repo} requested from {source}")
+        return "queued", repo
+
+    def publish(self):
+        """Replace the view the web page reads (main thread only)."""
+        with self.lock:
+            waiting = len(self.prechecks)
+        self.snapshot = build_view(self.opts, self.state, waiting)
+
+    def request_restore(self, item_id, typed, user):
+        """Queue a restore asked for on the web page, after checking it against the latest view. Returns the outcome as
+        a fact: ("queued", name) | ("refused", reason). The worker checks it again before it moves anything."""
+        item = next((q for q in self.snapshot["quarantine"] if q["id"] == item_id), None)
+        if not item:
+            return "refused", "this component is not in quarantine (any more)"
+        if typed.strip() != item["name"]:
+            return "refused", f"the name typed is not {item['name']}"
+        with self.lock:
+            if len(self.restores) >= RESTORE_QUEUE_MAX:
+                return "refused", "other restores are still waiting; try again in a moment"
+            self.restores.append((item["key"], typed, user))
+        log(f"restore of {item['name']} requested by {user} on the web page")
+        return "queued", item["name"]
 
     # -- called from the main thread only
     def process_ready(self):
@@ -1369,10 +1602,18 @@ class Worker:
             self.scan_all(baseline=self.first_run)
             log("startup scan complete.")
         self.started = True
+        baseline_recorded = self.first_run and self.opts["scan_on_start"]
         if self.state_found == "unreadable":
+            review = baseline_review(self.opts, self.state) if baseline_recorded else []
             notify(self.opts["notify_services"], "⚠️ Marketplace Guard: state lost - baseline recorded again",
                    "Marketplace Guard could not read its saved state, so every installed component was recorded as trusted "
-                   "again. Review components installed or updated recently.", tag="state")
+                   "again. Review components installed or updated recently."
+                   + (" Worth a look: " + ", ".join(f"{md_code(n)} ({v.upper()})" for n, v in review[:10]) + "."
+                      if review else ""), tag="state")
+        elif baseline_recorded:
+            title, message = welcome_message(self.opts, self.state, dict(_ENV, app_slug=app_slug()))
+            log(f"{title}: {len(baseline_review(self.opts, self.state))} component(s) of the baseline worth a look")
+            notify(self.opts["notify_services"], title, message, tag="welcome")
         for i, (title, message) in enumerate(self.notices):
             log(f"{title}: {message}")
             notify(self.opts["notify_services"], title, message, tag=f"notice_{i}")
@@ -1396,6 +1637,26 @@ class Worker:
                 process_request_file(self.opts, self.state, between=self.process_ready)
             except Exception as e:  # one repository must not stop the daemon
                 log(f"request-file handling failed: {e}")
+        with self.lock:
+            queued, self.prechecks = self.prechecks, []
+        for repo, source in queued:
+            self.process_ready()  # a fresh install does not wait for a download
+            try:
+                precheck_repo(repo, self.opts, self.state)
+            except Exception as e:  # one repository must not stop the daemon
+                log(f"pre-check of {repo} ({source}) failed: {e}")
+        with self.lock:
+            restores, self.restores = self.restores, []
+        for key, typed, user in restores:
+            try:
+                outcome, detail = restore_from_quarantine(key, typed, user, self.opts, self.state)
+            except OSError as e:  # file system fault while moving: report it, the daemon goes on
+                outcome, detail = "refused", f"moving it back failed: {e}"
+            if outcome != "restored":
+                log(f"restore of {os.path.basename(key)} refused: {detail}")
+                notify(self.opts["notify_services"], "Marketplace Guard - restore refused",
+                       f"{md_code(os.path.basename(key))}: {md_code(detail)}", tag="restore")
+        self.publish()
         now = self.clock()
         # periodic safety-net rescan (catches inotify events the watcher may have missed)
         if self.rescan_secs > 0 and now - self.last_rescan >= self.rescan_secs:
@@ -1411,6 +1672,279 @@ class Worker:
             except Exception as e:  # like a failed scan: one component must not stop the daemon
                 log(f"AI review retry failed: {e}")
             update_status(self.opts, self.state)
+
+
+# ---------------------------------------------------------------- web page (ingress, ADR-0041)
+INGRESS_PORT = 8099
+RESTORE_QUEUE_MAX = 5
+WEB_MAX_BODY = 4096
+WEB_MAX_REPORT = 256 * 1024
+WEB_STYLE = (
+    ":root{color-scheme:light dark;--fg:#1c1c1c;--bg:#fafafa;--card:#fff;--mute:#666;--line:#ddd;--accent:#03a9f4;"
+    "--bad:#c62828;--ok:#2e7d32}@media(prefers-color-scheme:dark){:root{--fg:#e1e1e1;--bg:#111;--card:#1c1c1c;"
+    "--mute:#9e9e9e;--line:#333}}body{margin:0;font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg)}"
+    "main{max-width:960px;margin:0 auto;padding:16px}h1{font-size:22px;margin:4px 0 16px}h2{font-size:17px;margin:0 0 8px}"
+    "section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 16px}"
+    "table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);"
+    "vertical-align:top}th{color:var(--mute);font-weight:600}input[type=text]{width:100%;max-width:420px;padding:8px;"
+    "border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);box-sizing:border-box}"
+    "button{padding:8px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}"
+    "button.danger{background:var(--bad)}.note{padding:10px 14px;border-radius:8px;margin:0 0 16px;border:1px solid}"
+    ".note.ok{border-color:var(--ok)}.note.error{border-color:var(--bad)}.mute{color:var(--mute)}"
+    "pre{white-space:pre-wrap;word-break:break-word;font-size:13px;background:var(--bg);padding:12px;border-radius:8px}"
+    "code{font-size:13px}a{color:var(--accent)}")
+
+
+def build_view(opts, state, waiting):
+    """What the web page shows, as plain data (ADR-0041). Built by the worker in the main thread; the page's threads
+    only read it."""
+    quarantine = sorted(({"id": hashlib.sha256(k.encode()).hexdigest()[:16], "key": k,
+                          "name": os.path.basename(k.rstrip("/")), "verdict": v.get("verdict") or "?",
+                          "ts": v.get("ts") or "", "copy": v["quarantined"]}
+                         for k, v in state.items()
+                         if not k.startswith("_") and isinstance(v, dict) and v.get("quarantined")),
+                        key=lambda q: q["ts"], reverse=True)
+    return {"quarantine": quarantine, "tracked": len([k for k in state if not k.startswith("_")]),
+            "last": dict(state.get("_last_scan") or {}), "ai": (_ENV.get("ai") or {}).get("state", "unknown"),
+            "notify": list(opts.get("notify_services") or []), "waiting": waiting}
+
+
+def web_reports(opts):
+    """The report files, newest first: [(file name, modified)] (regular .txt files only)."""
+    d = os.path.join(os.path.dirname(opts["request_file"]), "reports")
+    if not os.path.isdir(d):
+        return []
+    found = []
+    for n in os.listdir(d):
+        p = os.path.join(d, n)
+        if n.endswith(".txt") and os.path.isfile(p) and not os.path.islink(p):
+            found.append((n, os.path.getmtime(p)))
+    return sorted(found, key=lambda r: -r[1])
+
+
+def _read_text(path, limit):
+    """At most limit bytes of a regular file as text, or None when it is not a regular file."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        data = f.read(limit + 1)
+    text = data[:limit].decode("utf-8", errors="replace")
+    return text + ("\n... (cut)" if len(data) > limit else "")
+
+
+def _h(text):
+    return html.escape(str(text), quote=True)
+
+
+def web_page(title, body):
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            f"<title>{_h(title)}</title><style>{WEB_STYLE}</style></head><body><main>{body}</main></body></html>")
+
+
+def _when(ts):
+    return _h(str(ts).replace("T", " ")[:16]) if ts else "-"
+
+
+def render_index(view, reports, token, note=None):
+    """The main page (pure): status, pre-check form, quarantine, reports."""
+    last = view["last"]
+    parts = ["<h1>Marketplace Guard</h1>"]
+    if note:
+        parts.append(f"<div class=\"note {_h(note[0])}\">{_h(note[1])}</div>")
+    parts.append(
+        "<section><h2>Status</h2><table>"
+        f"<tr><th>In quarantine</th><td>{len(view['quarantine'])}</td></tr>"
+        f"<tr><th>Components known</th><td>{view['tracked']}</td></tr>"
+        f"<tr><th>Last scan</th><td>{_h(last.get('last_component') or '-')} "
+        f"<span class=\"mute\">{_h(last.get('last_verdict') or '')} {_h(last.get('last_action') or '')} "
+        f"{_when(last.get('last_scan_time'))}</span></td></tr>"
+        f"<tr><th>Alerts go to</th><td>{_h(', '.join(view['notify']) or '-')}</td></tr>"
+        f"<tr><th>AI second opinion</th><td>{_h(view['ai'])}</td></tr>"
+        f"<tr><th>Pre-checks waiting</th><td>{view['waiting']}</td></tr></table></section>")
+    parts.append(
+        "<section><h2>Check a repository before you install it</h2>"
+        "<form method=\"post\" action=\"precheck\">"
+        f"<input type=\"hidden\" name=\"token\" value=\"{_h(token)}\">"
+        "<p><input type=\"text\" name=\"repo\" placeholder=\"owner/repo or https://github.com/owner/repo\" "
+        "required maxlength=\"200\" autocomplete=\"off\"></p><button type=\"submit\">Pre-check</button>"
+        "<p class=\"mute\">It is downloaded to a temporary folder and scanned, not installed. The verdict arrives as a "
+        "notification, and its report appears below.</p></form></section>")
+    if view["quarantine"]:
+        rows = "".join(
+            f"<tr><td><code>{_h(q['name'])}</code></td><td>{_h(q['verdict'].upper())}</td><td>{_when(q['ts'])}</td>"
+            f"<td><a href=\"restore?id={_h(q['id'])}\">Report and restore&hellip;</a></td></tr>"
+            for q in view["quarantine"])
+        parts.append("<section><h2>In quarantine</h2><table><tr><th>Component</th><th>Verdict</th><th>Since</th>"
+                     f"<th></th></tr>{rows}</table></section>")
+    else:
+        parts.append("<section><h2>In quarantine</h2><p class=\"mute\">Nothing is in quarantine.</p></section>")
+    if reports:
+        rows = "".join(f"<tr><td><a href=\"report?f={_h(urllib.parse.quote(n))}\">{_h(n[:-4])}</a></td>"
+                       f"<td class=\"mute\">{_h(time.strftime('%Y-%m-%d %H:%M', time.localtime(m)))}</td></tr>"
+                       for n, m in reports[:50])
+        parts.append(f"<section><h2>Reports</h2><table>{rows}</table></section>")
+    return web_page("Marketplace Guard", "".join(parts))
+
+
+def render_report(name, text):
+    return web_page(f"Report {name}", f"<p><a href=\"./\">&larr; Back</a></p><h1>{_h(name)}</h1><pre>{_h(text)}</pre>")
+
+
+def render_restore(item, report, token, note=None):
+    """The restore page of one quarantined component (pure): its report and a form that asks for its name."""
+    parts = ["<p><a href=\"./\">&larr; Back</a></p>", f"<h1>{_h(item['name'])}</h1>"]
+    if note:
+        parts.append(f"<div class=\"note {_h(note[0])}\">{_h(note[1])}</div>")
+    parts.append(
+        f"<section><h2>Quarantined: {_h(item['verdict'].upper())}</h2><table>"
+        f"<tr><th>Since</th><td>{_when(item['ts'])}</td></tr>"
+        f"<tr><th>Was at</th><td><code>{_h(item['key'])}</code></td></tr>"
+        f"<tr><th>Now at</th><td><code>{_h(item['copy'])}</code></td></tr></table>"
+        f"<pre>{_h(report if report is not None else 'No report in the quarantined copy.')}</pre></section>")
+    parts.append(
+        "<section><h2>Restore</h2>"
+        "<p>Restoring moves the component back and accepts <strong>this copy</strong> as installed: it is not "
+        "quarantined again for being back, but a later change is checked as an update. Home Assistant loads it after "
+        "its next restart. Only restore a component you trust after reading its report.</p>"
+        "<form method=\"post\" action=\"restore\">"
+        f"<input type=\"hidden\" name=\"token\" value=\"{_h(token)}\">"
+        f"<input type=\"hidden\" name=\"id\" value=\"{_h(item['id'])}\">"
+        f"<p>Type <code>{_h(item['name'])}</code> to confirm:</p>"
+        "<p><input type=\"text\" name=\"name\" required maxlength=\"200\" autocomplete=\"off\"></p>"
+        "<button type=\"submit\" class=\"danger\">Restore</button></form></section>")
+    return web_page(f"Restore {item['name']}", "".join(parts))
+
+
+def make_web_handler(worker, opts, token, peers):
+    """The request handler of the web page. It answers only the ingress proxy, checks the form token and hands
+    requests to the worker; it decides nothing itself (ADR-0041)."""
+    notes, notes_lock = {}, threading.Lock()  # messages shown after a form, kept here so a link cannot carry text
+
+    def keep_note(kind, text):
+        nid = secrets.token_hex(8)
+        with notes_lock:
+            if len(notes) >= 50:
+                notes.pop(next(iter(notes)))
+            notes[nid] = (kind, text)
+        return nid
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        server_version, sys_version = "MarketplaceGuard", ""
+
+        def log_message(self, fmt, *args):
+            pass  # no access log
+
+        def send(self, status, body="", ctype="text/html; charset=utf-8", location=None):
+            data = body.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
+                             "form-action 'self'; base-uri 'none'; frame-ancestors 'self'")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cache-Control", "no-store")
+            if location:
+                self.send_header("Location", location)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def user(self):
+            name = self.headers.get("X-Remote-User-Display-Name") or self.headers.get("X-Remote-User-Name") or ""
+            name = "".join(c for c in name if c.isprintable())[:100]
+            return name or "an unknown user"
+
+        def note(self, query):
+            with notes_lock:
+                return notes.pop((query.get("m") or [""])[0], None)
+
+        def do_GET(self):
+            if self.client_address[0] not in peers:
+                return self.send(403, "forbidden", "text/plain; charset=utf-8")
+            url = urllib.parse.urlsplit(self.path)
+            query = urllib.parse.parse_qs(url.query)
+            route = url.path.rstrip("/")
+            if route == "":
+                return self.send(200, render_index(worker.snapshot, web_reports(opts), token, self.note(query)))
+            if route == "/report":
+                name = (query.get("f") or [""])[0]
+                if name not in {n for n, _ in web_reports(opts)}:
+                    return self.send(404, web_page("Not found", "<p>No such report. <a href=\"./\">Back</a></p>"))
+                text = _read_text(os.path.join(os.path.dirname(opts["request_file"]), "reports", name), WEB_MAX_REPORT)
+                return self.send(200, render_report(name[:-4], text or ""))
+            if route == "/restore":
+                item_id = (query.get("id") or [""])[0]
+                item = next((q for q in worker.snapshot["quarantine"] if q["id"] == item_id), None)
+                if not item:
+                    return self.send(404, web_page("Not found", "<p>This component is not in quarantine (any more). "
+                                                   "<a href=\"./\">Back</a></p>"))
+                report = _read_text(os.path.join(item["copy"], "SCAN_REPORT.txt"), WEB_MAX_REPORT)
+                return self.send(200, render_restore(item, report, token, self.note(query)))
+            return self.send(404, web_page("Not found", "<p>Not found. <a href=\"./\">Back</a></p>"))
+
+        def do_POST(self):
+            # Read the body (at most one byte over the limit) before any answer, so a client that is refused still
+            # gets the answer instead of a reset connection.
+            length = self.headers.get("Content-Length", "")
+            size = int(length) if length.isdigit() else -1
+            body = self.rfile.read(min(size, WEB_MAX_BODY + 1)) if size > 0 else b""
+            if self.client_address[0] not in peers:
+                return self.send(403, "forbidden", "text/plain; charset=utf-8")
+            if size < 0 or size > WEB_MAX_BODY:
+                self.close_connection = True
+                return self.send(413, "request too large", "text/plain; charset=utf-8")
+            form = urllib.parse.parse_qs(body.decode("utf-8", errors="replace"))
+            field = lambda k: (form.get(k) or [""])[0]  # noqa: E731
+            if not secrets.compare_digest(field("token"), token):
+                return self.send(403, web_page("Expired", "<p>This page has expired. <a href=\"./\">Reload</a> and "
+                                               "try again.</p>"))
+            route = urllib.parse.urlsplit(self.path).path.rstrip("/")
+            if route == "/precheck":
+                outcome, detail = worker.request_precheck(field("repo"), "the web page")
+                text = (f"{detail}: pre-check queued. The verdict arrives as a notification." if outcome == "queued"
+                        else f"Not taken: {detail}")
+                return self.send(303, location=f"./?m={keep_note('ok' if outcome == 'queued' else 'error', text)}")
+            if route == "/restore":
+                outcome, detail = worker.request_restore(field("id"), field("name"), self.user())
+                if outcome == "queued":
+                    nid = keep_note("ok", f"{detail}: restore requested. A notification confirms it; then restart "
+                                          "Home Assistant to load it.")
+                    return self.send(303, location=f"./?m={nid}")
+                nid = keep_note("error", f"Not restored: {detail}")
+                return self.send(303, location=f"restore?id={urllib.parse.quote(field('id'))}&m={nid}")
+            return self.send(404, web_page("Not found", "<p>Not found. <a href=\"./\">Back</a></p>"))
+
+    return Handler
+
+
+def ingress_peers():
+    """The address of the Supervisor, whose ingress proxy is the only client the page answers: derived from its host
+    name, as every app can resolve it. () when it cannot be resolved."""
+    try:
+        return (socket.gethostbyname("supervisor"),)
+    except OSError as e:  # name resolution is a network fault that cannot be checked beforehand
+        log(f"cannot resolve the Supervisor's address: {e}")
+        return ()
+
+
+def start_web(worker, opts, host="0.0.0.0", port=INGRESS_PORT, peers=None):
+    """Serve the web page in a thread. Returns the server, or None when it cannot answer the ingress proxy only or the
+    port cannot be bound (the guard runs on without the page; the log says why)."""
+    peers = ingress_peers() if peers is None else peers
+    if not peers:
+        log("web page not started: without the Supervisor's address it could not tell the ingress proxy from others")
+        return None
+    token = secrets.token_urlsafe(24)
+    try:
+        server = http.server.ThreadingHTTPServer((host, port), make_web_handler(worker, opts, token, peers))
+    except OSError as e:  # the port is taken or not allowed: a real fault, reported, not fatal
+        log(f"web page not available: {e}")
+        return None
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, name="web", daemon=True).start()
+    log(f"web page: Marketplace Guard in Home Assistant's sidebar (port {server.server_address[1]})")
+    return server
 
 
 def run_daemon(opts):
@@ -1462,6 +1996,11 @@ def run_daemon(opts):
     obs.schedule(ReqHandler(), req_dir, recursive=False)
     log(f"repository pre-check request file: {opts['request_file']}")
     obs.start()
+    slug = app_slug()
+    threading.Thread(target=read_stdin, args=(worker,), name="stdin", daemon=True).start()
+    start_web(worker, opts)
+    log("repository pre-check from Home Assistant: action hassio.addon_stdin with "
+        + (f"addon: {slug}" if slug else "this app's slug as addon") + ", input: owner/repo")
 
     try:
         while True:

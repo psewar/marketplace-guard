@@ -79,12 +79,14 @@ class TestRegionalSpelling(unittest.TestCase):
 
     def test_regional_forms_are_found(self):
         for word in ("au" + self.SS + "er", "Au" + self.SS + "erhalb", "grö" + self.SS + "ere", "gemä" + self.SS,
-                     "regelmä" + self.SS + "ig", "schlie" + self.SS + "lich", "Stra" + self.SS + "e", "hei" + self.SS + "t"):
+                     "regelmä" + self.SS + "ig", "schlie" + self.SS + "lich", "Stra" + self.SS + "e", "hei" + self.SS + "t",
+                     "hie" + self.SS, "lie" + self.SS + "en", "gie" + self.SS + "en", "Fu" + self.SS + "ball",
+                     "abschie" + self.SS + "en", "stie" + self.SS):
             with self.subTest(word=word):
                 self.assertEqual(len(self.hits(f"Ein Satz mit {word} darin.")), 1)
 
     def test_standard_german_and_english_pass(self):
-        for line in ("außer, größere, gemäß, regelmäßig, schließlich, Straße, heißt",
+        for line in ("außer, größere, gemäß, regelmäßig, schließlich, Straße, heißt, hieß, ließen, gießen, Fußball",
                      "dass, muss, müssen, Schloss, Klasse, Prozess, Adresse, besser",
                      "a gross error, a fuss, the mass, reissue, classes, assessment, grosses"):
             with self.subTest(line=line):

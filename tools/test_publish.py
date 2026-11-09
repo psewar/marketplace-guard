@@ -11,6 +11,7 @@ ACCOUNT = ("example-user", "example-user@users.noreply.github.com")
 CONFIG = ('name: "Marketplace Guard"\nversion: "{v}"\nslug: "marketplace_guard"\n'
           'description: "Example."\narch:\n  - amd64\n')
 REPOSITORY = 'name: "Marketplace Guard"\nurl: "https://github.com/OWNER/marketplace-guard"\nmaintainer: "OWNER"\n'
+README = "# Marketplace Guard\n\nInstall:\n\n<!-- publish: install -->\n\nMore.\n"
 
 
 def run(*args, cwd):
@@ -39,6 +40,7 @@ class Sandbox(unittest.TestCase):
         run("init", "--quiet", "-b", "main", cwd=self.dev)
         run("init", "--quiet", "--bare", "-b", "main", self.public, cwd=self.tmp.name)
         write(self.dev, "repository.yaml", REPOSITORY)
+        write(self.dev, "README.md", README)
         write(self.dev, "marketplace_guard/config.yaml", CONFIG.format(v="1.0.0"))
         write(self.dev, "marketplace_guard/CHANGELOG.md", "# Changelog\n\n## 1.0.0\n- First.\n")
         write(self.dev, "secret-history.txt", "removed later\n")
@@ -60,9 +62,11 @@ class Sandbox(unittest.TestCase):
         tree = os.path.join(work, "tree")
         os.makedirs(tree)
         publish.export_tree(sha, tree)
-        publish.fill_public_fields(tree, *ACCOUNT)
+        url = publish.fill_public_fields(tree, *ACCOUNT)
+        publish.fill_install(tree, url)
         path, empty = publish.prepare_public(self.public, work, version)
-        changelog = publish.changelog_section(publish.read_at(sha, "marketplace_guard/CHANGELOG.md"), version)
+        changelog = publish.changelog_since(publish.read_at(sha, "marketplace_guard/CHANGELOG.md"), version,
+                                            publish.newest_published(path))
         new = publish.commit_release(path, tree, version, changelog, empty, publish.neutral_date(day), ACCOUNT)
         run("push", "--quiet", "origin", "HEAD:refs/heads/main", f"refs/tags/v{version}", cwd=path)
         return new, empty
@@ -74,6 +78,15 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(publish.changelog_section(text, "2.0.0"), "- New name.\n- More.")
         self.assertEqual(publish.changelog_section(text, "1.7.2"), "- Old.")
         self.assertIsNone(publish.changelog_section(text, "9.9.9"))
+
+    def test_release_notes_name_every_version_since_the_last_publication(self):
+        text = ("# Changelog\n\n## 2.3.0\n- Page.\n\n## 2.2.0\n- Action.\n\n## 2.1.0\n- Summary.\n\n"
+                "## 2.0.2\n- Texts.\n")
+        self.assertEqual(publish.changelog_since(text, "2.3.0", "2.0.2"),
+                         "## 2.3.0\n- Page.\n\n## 2.2.0\n- Action.\n\n## 2.1.0\n- Summary.")
+        self.assertEqual(publish.changelog_since(text, "2.3.0", "2.2.0"), "- Page.")
+        self.assertEqual(publish.changelog_since(text, "2.3.0"), "- Page.")
+        self.assertIsNone(publish.changelog_since(text, "9.9.9"))
 
     def test_neutral_date_has_no_time_of_day_or_zone(self):
         self.assertEqual(publish.neutral_date(datetime.date(2026, 11, 7)), "2026-11-07T00:00:00+0000")
@@ -129,6 +142,25 @@ class TestRefusals(Sandbox):
         with self.assertRaises(publish.Refused):
             publish.fill_public_fields(tree, *ACCOUNT)
 
+    def test_readme_without_install_marker_refuses(self):
+        tree = tempfile.mkdtemp(dir=self.tmp.name)
+        write(tree, "README.md", "# Marketplace Guard\n\nNo marker.\n")
+        with self.assertRaises(publish.Refused):
+            publish.fill_install(tree, "https://github.com/example-user/marketplace-guard")
+
+    def test_install_marker_left_in_another_file_refuses(self):
+        tree = tempfile.mkdtemp(dir=self.tmp.name)
+        write(tree, "README.md", README)
+        write(tree, "marketplace_guard/README.md", "# App\n\n<!-- publish: install -->\n")
+        with self.assertRaises(publish.Refused):
+            publish.fill_install(tree, "https://github.com/example-user/marketplace-guard")
+
+    def test_marker_named_inside_a_line_is_not_a_marker(self):
+        tree = tempfile.mkdtemp(dir=self.tmp.name)
+        write(tree, "README.md", README)
+        write(tree, "AGENTS.md", "The line `<!-- publish: install -->` in README.md is filled by publish.py.\n")
+        publish.fill_install(tree, "https://github.com/example-user/marketplace-guard")
+
 
 class TestPublication(Sandbox):
     def public_clone(self):
@@ -146,7 +178,8 @@ class TestPublication(Sandbox):
         self.assertIn("2026-11-07 00:00:00 +0000|2026-11-07 00:00:00 +0000", meta)
         self.assertIn(publish.TRAILER, meta)
         files = sorted(run("ls-tree", "-r", "--name-only", "HEAD", cwd=pub).split())
-        self.assertEqual(files, ["marketplace_guard/CHANGELOG.md", "marketplace_guard/config.yaml", "repository.yaml"])
+        self.assertEqual(files, ["README.md", "marketplace_guard/CHANGELOG.md", "marketplace_guard/config.yaml",
+                                 "repository.yaml"])
         dev_commits = run("rev-list", "--all", cwd=self.dev).split()
         for sha in dev_commits:  # no object of the development history reaches the public repository
             self.assertNotEqual(subprocess.run(["git", "cat-file", "-e", sha], cwd=pub).returncode, 0)
@@ -166,6 +199,20 @@ class TestPublication(Sandbox):
         with open(os.path.join(self.dev, "repository.yaml"), encoding="utf-8") as f:
             self.assertEqual(f.read(), REPOSITORY)  # the development repository keeps its placeholders
 
+    def test_the_readme_gets_the_install_button_in_the_published_copy_only(self):
+        self.release()
+        pub = self.public_clone()
+        with open(os.path.join(pub, "README.md"), encoding="utf-8") as f:
+            readme = f.read()
+        self.assertNotIn("<!-- publish: install -->", readme)
+        self.assertIn("https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url="
+                      "https%3A%2F%2Fgithub.com%2Fexample-user%2Fmarketplace-guard)", readme)
+        self.assertIn("https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg", readme)
+        self.assertIn("Repository URL: `https://github.com/example-user/marketplace-guard`", readme)
+        self.assertTrue(readme.startswith("# Marketplace Guard\n\nInstall:\n\n[![") and readme.endswith("\n\nMore.\n"))
+        with open(os.path.join(self.dev, "README.md"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), README)
+
     def test_next_release_is_one_more_commit_with_its_changelog(self):
         self.release()
         write(self.dev, "marketplace_guard/config.yaml", CONFIG.format(v="1.1.0"))
@@ -178,6 +225,17 @@ class TestPublication(Sandbox):
         body = run("log", "-1", "--format=%B", cwd=pub)
         self.assertTrue(body.startswith("Marketplace Guard 1.1.0\n\n- Second."))
         self.assertEqual(sorted(run("tag", "--list", cwd=pub).split()), ["v1.0.0", "v1.1.0"])
+
+    def test_a_release_that_skips_versions_names_them_all(self):
+        self.release()
+        write(self.dev, "marketplace_guard/config.yaml", CONFIG.format(v="1.2.0"))
+        write(self.dev, "marketplace_guard/CHANGELOG.md",
+              "# Changelog\n\n## 1.2.0\n- Third.\n\n## 1.1.0\n- Second.\n\n## 1.0.0\n- First.\n")
+        run("commit", "--quiet", "-am", "1.1.0 and 1.2.0, only 1.2.0 published", cwd=self.dev)
+        self.release(datetime.date(2026, 12, 1))
+        body = run("log", "-1", "--format=%B", cwd=self.public_clone())
+        self.assertIn("## 1.2.0\n- Third.\n\n## 1.1.0\n- Second.", body)
+        self.assertNotIn("First.", body)
 
 
 if __name__ == "__main__":

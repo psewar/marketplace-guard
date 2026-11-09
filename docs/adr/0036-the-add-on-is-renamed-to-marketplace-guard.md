@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-07
 decision-makers: maintainer
 ---
@@ -31,7 +31,7 @@ install it, a new slug breaks their installations; before the publication only t
 
 ## Decision Outcome
 
-Proposed: the third option, in version 2.0.0 before the first publication.
+Chosen option: the third option, in version 2.0.0 before the first publication.
 
 * Name "Marketplace Guard", slug `marketplace_guard`, add-on folder `marketplace_guard/` in the repository, test module
   `test_marketplace_guard.py`.
@@ -66,3 +66,5 @@ look for the Marketplace, not for "components".
 options agree (checked by `tools/check.py`); `TestSiteTermList` in `tools/test_check_neutral.py` covers the list left
 under the former name; no file outside the changelog and the accepted ADRs names `hacs_guard` or "HACS Guard" except
 where it tells the former name.
+
+Accepted by the maintainer on 2026-11-08; implemented in pull request #36.

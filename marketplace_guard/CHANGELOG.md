@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.3.0
+- **Web page:** Marketplace Guard has a page in Home Assistant's sidebar (for administrators; turn on *Show in sidebar*
+  on the Info tab): status, a field to pre-check a repository, the components in quarantine with their reports, and
+  the latest reports (ADR-0041).
+- **Restore from the page:** after reading a quarantined component's report, type its name to put it back. This copy is
+  accepted as installed (not quarantined again for being back, a later change is checked as an update), without an
+  allowlist entry. A notification names the component and the user; then restart Home Assistant to load it.
+
+## 2.2.0
+- **Pre-check from Home Assistant:** run the action `hassio.addon_stdin` with `addon: <app slug>` and
+  `input: owner/repo` (or a GitHub URL, or a list of up to ten) to pre-check a repository without editing a file;
+  from Developer tools, a script, an automation or a dashboard. The documentation has a script with a field for a
+  dashboard. The app names its slug in the log, the first-start summary and the status sensor (`app_slug`). Requests
+  are bounded (20 waiting at most) and can only ask for pre-checks (ADR-0040).
+
+## 2.1.0
+- **First start:** one notification sums up the baseline: how many components were recorded as trusted, which of them
+  are worth a look (verdict at the notification threshold or above), the notify services and AI Task entities your Home
+  Assistant has for the settings, and how to pre-check a repository. It replaces the notification per component of the
+  baseline; a component at the quarantine threshold is named there, its findings are in its report (ADR-0039).
+- **Status sensor:** the attribute `notify_targets_available` lists the notify services Home Assistant has.
+- When the saved state was unreadable, the "state lost" notification names the components worth a look.
+
+## 2.0.3
+- **Documentation:** the Documentation tab starts with getting started (what the first start does, push alerts, the AI
+  second opinion), then everyday use (installing, pre-checking a repository, reports, restoring a component), the
+  status sensor with a dashboard card, a table of all options, and troubleshooting; English and German alike. It uses
+  Home Assistant's current names (apps, since Home Assistant 2026.2) and fixes two places where the former name was
+  left.
+- **Install:** the published README has a button that adds the repository to your Home Assistant in one click, and
+  prints the repository URL (ADR-0038).
+- No change in behaviour.
+
 ## 2.0.2
 - Documentation and tests: examples are described without details of any installation; consistent spelling in the
   German documentation. No change in behaviour.

@@ -8,7 +8,8 @@ releases. Each release is one commit made from the tree of --ref (default main) 
 publishing account as author and a neutral date (the day, 00:00 UTC). The first one starts the public repository.
 
 The publishing account is the one gh is logged in to (or --owner). It is written into the published copy only:
-`url` and `maintainer` in repository.yaml and `url` in marketplace_guard/config.yaml, so that this repository stays
+`url` and `maintainer` in repository.yaml, `url` in marketplace_guard/config.yaml, and the install button with the
+repository URL in place of the line `<!-- publish: install -->` in README.md (ADR-0038), so that this repository stays
 site-neutral (ADR-0011).
 
 The tool checks before it acts and refuses with the state and the next step:
@@ -17,7 +18,8 @@ The tool checks before it acts and refuses with the state and the next step:
 - the public repository is empty, or its newest commit was made by this tool (a commit made by hand there would be
   overwritten by the next release, so it has to be brought into this repository first);
 - the public repository exists, or --create is given to create it (public, with gh).
-Then it commits, tags v<version> and pushes; --release adds a GitHub release with the version's changelog section.
+Then it commits, tags v<version> and pushes; --release adds a GitHub release. Commit message and release notes carry the
+changelog sections of every version since the newest published one, so a release that skips versions names them all.
 --dry-run stops before anything is created or pushed. Exit 0: published (or dry run complete); 1: refused; 2: a step
 failed.
 """
@@ -30,11 +32,16 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADDON = "marketplace_guard"
 REPO_NAME = "marketplace-guard"
 TRAILER = "Published-by: tools/publish.py"
+# The install button needs the public repository's URL, which only the published copy may contain (ADR-0038).
+INSTALL_MARKER = "<!-- publish: install -->"
+INSTALL_FILES = ("README.md",)
+MY_HA = "https://my.home-assistant.io"
 
 
 class Refused(Exception):
@@ -62,6 +69,31 @@ def changelog_section(text, version):
     """The lines under '## <version>' up to the next '## ' heading, or None."""
     m = re.search(rf"^## {re.escape(version)}\s*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
     return m.group(1).strip() if m else None
+
+
+def version_key(version):
+    return tuple(int(p) for p in version.split("."))
+
+
+def changelog_since(text, version, published=None):
+    """The release notes: the changelog sections of the versions after the newest published one up to this one, newest
+    first, each under its heading when there is more than one; this version's section alone for the first publication.
+    None when there is none."""
+    sections = [(m.group(1), m.group(2).strip())
+                for m in re.finditer(r"^## (\d+\.\d+\.\d+)\s*\n(.*?)(?=^## |\Z)", text, re.M | re.S)]
+    top, low = version_key(version), version_key(published) if published else None
+    picked = [(v, body) for v, body in sections
+              if (v == version if low is None else low < version_key(v) <= top)]
+    picked.sort(key=lambda s: version_key(s[0]), reverse=True)
+    if len(picked) <= 1:
+        return picked[0][1] if picked else None
+    return "\n\n".join(f"## {v}\n{body}" for v, body in picked)
+
+
+def newest_published(path):
+    """The newest version tagged v<x.y.z> in the public repository's clone, or None."""
+    tags = [t[1:] for t in git("tag", "--list", "v*", cwd=path).stdout.split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
+    return max(tags, key=version_key) if tags else None
 
 
 def neutral_date(today=None):
@@ -132,6 +164,38 @@ def fill_public_fields(tree, account, email):
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     return url
+
+
+def install_block(url):
+    """What the install marker becomes in the published copy: the My Home Assistant button that opens the dialog for
+    adding an app repository with this URL filled in, and the URL itself for adding it by hand."""
+    redirect = f"{MY_HA}/redirect/supervisor_add_addon_repository/?repository_url={urllib.parse.quote(url, safe='')}"
+    return (f"[![Add the repository to your Home Assistant]({MY_HA}/badges/supervisor_add_addon_repository.svg)]"
+            f"({redirect})\n\nRepository URL: `{url}`")
+
+
+def fill_install(tree, url):
+    """Replace the install marker line in INSTALL_FILES by install_block(url). Refuses when one of them lacks the
+    marker line, or when a marker line is left anywhere else in the tree (it would be published unfilled). Only a line
+    that is the marker and nothing else counts, so code and documents may name it."""
+    line = re.compile(rb"^" + re.escape(INSTALL_MARKER.encode()) + rb"\r?$", re.M)
+    for rel in INSTALL_FILES:
+        path = os.path.join(tree, rel)
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        if not re.search(rf"^{re.escape(INSTALL_MARKER)}$", text, re.M):
+            raise Refused(f"{rel} has no line `{INSTALL_MARKER}` for the install button.")
+        text = re.sub(rf"^{re.escape(INSTALL_MARKER)}$", lambda _: install_block(url), text, flags=re.M)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+    for d, _, files in os.walk(tree):
+        for name in files:
+            path = os.path.join(d, name)
+            with open(path, "rb") as f:
+                if line.search(f.read()):
+                    raise Refused(f"{os.path.relpath(path, tree)} still holds `{INSTALL_MARKER}`, which only "
+                                  f"{', '.join(INSTALL_FILES)} may carry. Next step: remove it there, or add the file "
+                                  "to INSTALL_FILES.")
 
 
 def prepare_public(public_url, workdir, version):
@@ -220,8 +284,9 @@ def main(argv=None):
             os.makedirs(tree)
             export_tree(sha, tree)
             url = fill_public_fields(tree, account, email)
+            fill_install(tree, url)
             path, empty = prepare_public(public, work, version)
-            changelog = changelog_section(read_at(sha, f"{ADDON}/CHANGELOG.md"), version)
+            changelog = changelog_since(read_at(sha, f"{ADDON}/CHANGELOG.md"), version, newest_published(path))
             new = commit_release(path, tree, version, changelog, empty, neutral_date(), (account, email))
             files = git("ls-tree", "-r", "--name-only", "HEAD", cwd=path).stdout.split()
             print(f"{'start commit' if empty else 'release commit'} {new[:7]} for Marketplace Guard {version} "

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-07
 decision-makers: maintainer
 ---
@@ -46,7 +46,7 @@ exhaust the memory of a Home Assistant host.
 
 ## Decision Outcome
 
-Proposed: the fourth option.
+Chosen option: the fourth option.
 
 Unchanged from ADR-0027: only regular files are opened (`open_regular()`, without following links and without
 blocking), links and special files are reported by `special_entries()`, every rule stays linear (line numbers by
@@ -90,3 +90,5 @@ augmented assignment is code, with its line; a file beyond the check limit (also
 or broken text is not data; the finding for a large file is `info` for data and `high` for code; bandit is handed only
 files up to its limit, named after `--`, and a larger one is reported. A 64 MiB file of code and the 26 MiB data module
 were scanned in the image with the numbers above.
+
+Accepted by the maintainer on 2026-11-08; implemented in pull request #38.

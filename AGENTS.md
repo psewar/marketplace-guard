@@ -28,7 +28,9 @@ a release to the public repository (`tools/test_publish.py`), `docs/adr/` holds 
 - The pull request description says what changes and why, names its ADRs and says how it was tested.
 - Development happens here. A merged release reaches the public repository only through `python3 tools/publish.py`,
   run by the maintainer ([ADR-0013](docs/adr/0013-publish-as-a-new-repository-with-one-start-commit.md)); nothing is
-  pushed or merged there by hand. The publishing account's name is written into the published copy only.
+  pushed or merged there by hand. The publishing account's name is written into the published copy only; the line
+  `<!-- publish: install -->` in `README.md` becomes the install button there
+  ([ADR-0038](docs/adr/0038-the-published-readme-carries-a-one-click-install-button.md)), so keep it.
 
 ## What a change brings along
 

@@ -47,7 +47,7 @@ configuration:
   scan_on_start:
     name: Scan on start
     description: >-
-      Scan all existing components when the add-on starts. On the very first run they are recorded
+      Scan all existing components when the app starts. On the very first run they are recorded
       as trusted (baseline) and never quarantined - only reported.
   debounce_seconds:
     name: Debounce (seconds)
@@ -73,7 +73,7 @@ configuration:
     name: AI Task
     description: >-
       Entity id of the AI Task that performs the review, e.g. "ai_task.<name>". Leave empty to use the
-      AI Task entity Home Assistant prefers (set in Home Assistant's settings). The add-on log and the
+      AI Task entity Home Assistant prefers (set in Home Assistant's settings). The app log and the
       status sensor's "ai_task_entities" attribute list the AI Task entities your Home Assistant has.
   ai_can_quarantine:
     name: Let AI trigger quarantine

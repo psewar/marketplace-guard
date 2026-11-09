@@ -21,15 +21,21 @@ python3 tools/publish.py --release           # the first time: --create --releas
 `python3 tools/check.py --all` passing (tests, ADR index, links, configuration, site-neutral with your own site term
 list, [ADR-0011](docs/adr/0011-the-repository-is-site-neutral.md)), a version that is not yet published, and a public
 repository whose newest commit it made itself. It writes the publishing account (the one `gh` is logged in to, or
-`--owner`) into the published copy only: `url` and `maintainer` in `repository.yaml` and `url` in
-`marketplace_guard/config.yaml` (the "Visit add-on page" link). The commit has that account as author and the day at
-00:00 UTC as date; the tag is `v<version>`; `--release` adds a GitHub release with the changelog section. Never push
-to the public repository by hand: the next release would refuse until the change is brought back here.
+`--owner`) into the published copy only: `url` and `maintainer` in `repository.yaml`, `url` in
+`marketplace_guard/config.yaml` (the link on the app's page), and the install button with the repository URL in place
+of the line `<!-- publish: install -->` in `README.md`
+([ADR-0038](docs/adr/0038-the-published-readme-carries-a-one-click-install-button.md)). The commit has that account as
+author and the day at 00:00 UTC as date; the tag is `v<version>`; `--release` adds a GitHub release. Commit message and
+release notes carry the changelog sections of every version since the last publication. Never push to the public
+repository by hand: the next release would refuse until the change is brought back here.
 
 ## 2. Install on any Home Assistant OS instance
 
-1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories**.
-2. Add `https://github.com/<account>/marketplace-guard` → the **Marketplace Guard** add-on appears.
+The published `README.md` has a button that opens the dialog for adding the repository in your own Home Assistant. By
+hand (add-ons are called *apps* since Home Assistant 2026.2):
+
+1. Settings → Apps → **Install app** → ⋮ → **Repositories**.
+2. Add `https://github.com/<account>/marketplace-guard` → the **Marketplace Guard** app appears.
 3. Install → Start. The defaults work without changes.
 
 ## Notes

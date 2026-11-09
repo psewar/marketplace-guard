@@ -47,7 +47,7 @@ configuration:
   scan_on_start:
     name: Beim Start scannen
     description: >-
-      Beim Start des Add-ons alle vorhandenen Komponenten scannen. Beim allerersten Lauf werden sie
+      Beim Start der App alle vorhandenen Komponenten scannen. Beim allerersten Lauf werden sie
       als vertraut hinterlegt (Baseline) und nie quarantäniert – nur gemeldet.
   debounce_seconds:
     name: Entprellung (Sekunden)
@@ -74,7 +74,7 @@ configuration:
     description: >-
       Entity-ID der AI-Task, die prüft, z. B. „ai_task.<name>". Leer lassen, um die AI-Task-Entität zu
       nutzen, die Home Assistant bevorzugt (in den Einstellungen von Home Assistant festgelegt). Das
-      Add-on-Log und das Attribut „ai_task_entities" des Status-Sensors nennen die vorhandenen AI-Tasks.
+      App-Protokoll und das Attribut „ai_task_entities" des Status-Sensors nennen die vorhandenen AI-Tasks.
   ai_can_quarantine:
     name: KI darf Quarantäne auslösen
     description: >-
