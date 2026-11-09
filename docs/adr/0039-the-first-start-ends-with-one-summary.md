@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-09
 decision-makers: maintainer
 ---
@@ -31,7 +31,7 @@ them only in the log.
 
 ## Decision Outcome
 
-Proposed: the second option.
+Chosen option: the second option.
 
 * After the baseline of the first start (no saved state, **Scan on start** on), one notification `Marketplace Guard is
   active` says: how many components were recorded as trusted; which of them are worth a look (verdict at the
@@ -66,3 +66,5 @@ the summary, which counts the baseline and names the component worth a look; it 
 start without a baseline scan send none; an unreadable state names the components in the "state lost" notification and
 sends no summary; the components worth a look follow the notification threshold, highest first; the status sensor
 carries `notify_targets_available`.
+
+Accepted by the maintainer on 2026-11-09; implemented in pull request #42.

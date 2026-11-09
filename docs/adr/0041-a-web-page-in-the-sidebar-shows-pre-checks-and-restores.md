@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-09
 decision-makers: maintainer
 ---
@@ -38,7 +38,7 @@ allowlist) can be changed through the Supervisor API that Core uses for the Conf
 
 ## Decision Outcome
 
-Proposed: the fourth option; the maintainer chose to have restoring on the page.
+Chosen option: the fourth option; the maintainer chose to have restoring on the page.
 
 * `config.yaml`: `ingress: true` on port 8099, a sidebar panel for administrators (`panel_admin`), no other port. The
   server is Python's `http.server` in a thread; it answers only the Supervisor's ingress proxy, whose address it
@@ -76,3 +76,5 @@ pre-check from the page is queued and its note shown; a restore needs the name; 
 the report file, accepts the copy, notifies with the user, is not undone by the watcher, and a later change is scanned
 again; a restore is refused when the place is taken, the copy is outside the quarantine folder, or the place is not a
 watched folder.
+
+Accepted by the maintainer on 2026-11-09; implemented in pull request #44.

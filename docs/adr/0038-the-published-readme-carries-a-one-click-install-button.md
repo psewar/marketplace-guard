@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-09
 decision-makers: maintainer
 ---
@@ -32,7 +32,7 @@ the URL filled in, in the reader's own Home Assistant.
 
 ## Decision Outcome
 
-Proposed: the third option.
+Chosen option: the third option.
 
 * `README.md` holds the line `<!-- publish: install -->`; an HTML comment, invisible where the README is shown here.
 * `tools/publish.py` replaces it by the My Home Assistant button (badge and redirect with the URL-encoded repository
@@ -60,3 +60,5 @@ This extends the list of places in ADR-0013 where the account is written; the re
 `tools/test_publish.py`: the published README holds the button with the URL-encoded repository URL and the printed URL
 instead of the marker, and the README of the development repository keeps the marker; a README without the marker
 refuses; a marker line left in another file refuses; a marker named inside a line is not one.
+
+Accepted by the maintainer on 2026-11-09; implemented in pull request #41.

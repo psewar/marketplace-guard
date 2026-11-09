@@ -1,5 +1,5 @@
 name: "Marketplace Guard"
-version: "2.4.0"
+version: "2.4.1"
 slug: "marketplace_guard"
 description: "Security scanning for custom components from Home Assistant's Marketplace, HACS or by hand: automatic quarantine of newly installed components, on-demand repository pre-checks, and an optional AI second opinion. Formerly HACS Guard."
 url: "https://github.com/psewar/marketplace-guard"

@@ -245,6 +245,8 @@ def refresh_environment(opts):
            "gate": gate_state(opts)}
     if new == _ENV:
         return
+    if new["gate"] not in ("off", _ENV.get("gate")):
+        log(f"marketplace gate: {new['gate']}")
     _ENV.update(new)
     avail = ", ".join(plan["available"]) or "none"
     log({"off": f"AI review: off. AI Task entities in Home Assistant: {avail}",
@@ -1513,7 +1515,7 @@ class Worker:
         self.snapshot = build_view(opts, state, 0)  # what the web page shows; replaced, never changed in place
         now = clock()
         self.core_deadline = now + CORE_WAIT_SECONDS
-        self.last_rescan = self.last_status = now
+        self.last_rescan = self.last_status = self.last_gate_check = now
         self.rescan_secs = int(opts.get("rescan_interval_minutes", 360)) * 60
         self.status_secs = max(60, int(opts.get("status_heartbeat_minutes", 15)) * 60)
 
@@ -1680,19 +1682,26 @@ class Worker:
             self.scan_all(baseline=False)
             update_status(self.opts, self.state)
         if now - self.last_status >= self.status_secs:
-            self.last_status = now
+            self.last_status = self.last_gate_check = now
             refresh_environment(self.opts)  # picks up AI Task entities or notify services added since the start
             try:
                 retry_ai_reviews(self.opts, self.state, between=self.process_ready)
             except Exception as e:  # like a failed scan: one component must not stop the daemon
                 log(f"AI review retry failed: {e}")
             update_status(self.opts, self.state)
+        elif (self.opts.get("marketplace_gate") and _ENV.get("gate") != "active"
+              and now - self.last_gate_check >= GATE_PENDING_CHECK_SECONDS):
+            # the operator is about to add the gate: the sensor says "active" within a minute, not at the heartbeat
+            self.last_gate_check = now
+            if refresh_gate(self.opts):
+                update_status(self.opts, self.state)
 
 
 # ---------------------------------------------------------------- Marketplace gate (ADR-0042)
 GATE_DOMAIN = "marketplace_guard_gate"
 GATE_MAX_REQUEST = 4096
 GATE_ANSWER_KEEP_SECONDS = 600
+GATE_PENDING_CHECK_SECONDS = 60  # until the gate is active, Home Assistant is asked this often instead of per heartbeat
 GATE_ADD_LINK = f"https://my.home-assistant.io/redirect/config_flow_start/?domain={GATE_DOMAIN}"
 
 
@@ -1730,7 +1739,9 @@ def _gate_files(root):
 
 def install_gate(opts, state):
     """Put the gate integration into custom_components when the option asks for it, and accept that copy as installed
-    (ADR-0042). Returns the outcome as a fact: "off" | "no-source" | "no-marketplace" | "unchanged" | "installed"."""
+    (ADR-0042). Returns the outcome as a fact: "off" | "no-source" | "no-marketplace" | "unchanged" | "installed" (first
+    copy: the notification says to add the integration) | "updated" (replaced an earlier copy: Home Assistant loads it
+    at its next restart, the earlier one keeps checking until then)."""
     if not opts.get("marketplace_gate"):
         return "off"
     src = gate_source()
@@ -1751,14 +1762,17 @@ def install_gate(opts, state):
         if os.path.lexists(tmp):
             shutil.rmtree(tmp)
         shutil.copytree(src, tmp, ignore=shutil.ignore_patterns("__pycache__"))
-        if os.path.lexists(dest):
+        earlier = os.path.lexists(dest)
+        if earlier:
             shutil.rmtree(dest)  # an earlier version of the gate
         os.replace(tmp, dest)
-        outcome = "installed"
+        outcome = "updated" if earlier else "installed"
     entry = state.get(dest)
-    if outcome == "installed" or not (isinstance(entry, dict) and entry.get("gate")):
+    if outcome in ("installed", "updated") or not (isinstance(entry, dict) and entry.get("gate")):
         state[dest] = {"hash": dir_hash(dest), "hv": HASH_VERSION, "verdict": "clean", "ts": now_iso(), "gate": True}
         save_state(state)
+    if outcome == "updated":
+        log(f"marketplace gate: updated in {dest}; Home Assistant loads it at its next restart")
     if outcome == "installed":
         log(f"marketplace gate: installed into {dest}")
         notify(opts["notify_services"], "Marketplace Guard: gate installed",
@@ -1774,6 +1788,17 @@ def gate_state(opts):
         return "off"
     loaded = loaded_in_home_assistant(GATE_DOMAIN)
     return {True: "active", False: "not set up", None: "unknown"}[loaded]
+
+
+def refresh_gate(opts):
+    """Ask Home Assistant again whether the gate is loaded and keep the answer as a fact. Returns whether it changed,
+    so the status sensor can follow at once instead of at the next heartbeat."""
+    gate = gate_state(opts)
+    if gate == _ENV.get("gate"):
+        return False
+    _ENV["gate"] = gate
+    log(f"marketplace gate: {gate}")
+    return True
 
 
 def gate_requests(opts, now=None):

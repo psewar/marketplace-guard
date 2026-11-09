@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-09
 decision-makers: maintainer
 ---
@@ -34,7 +34,7 @@ up.
 
 ## Decision Outcome
 
-Proposed: the third option.
+Chosen option: the third option.
 
 * `config.yaml` has `stdin: true`. A thread reads stdin and splits it into requests: complete lines, and complete JSON
   values that came without a newline (also several in a row). A request is a repository (`owner/repo` or a GitHub
@@ -68,3 +68,5 @@ over-long request, a list of non-strings, invalid JSON, too many repositories, i
 does not block what follows); the queue normalises, does not take a repository twice, refuses what is not a
 repository and is bounded; the worker runs the queue, on the first start after the baseline; a pipe carries a request
 to the queue and a bad one is notified; the slug comes from the host name; the summary shows the action.
+
+Accepted by the maintainer on 2026-11-09; implemented in pull request #43.

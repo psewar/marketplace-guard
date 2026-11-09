@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-09
 decision-makers: maintainer
 ---
@@ -49,11 +49,12 @@ integration with its own releases, and a restart came before any code ran, so th
 
 ## Decision Outcome
 
-Proposed: the gate integration (third option), opt-in, as the bridge until Home Assistant offers a hook.
+Chosen option: the gate integration (third option), opt-in, as the bridge until Home Assistant offers a hook.
 
 * The add-on carries the integration `marketplace_guard_gate` in its image. With the option `marketplace_gate` it
   copies it into `custom_components` (again when the copy differs, ignoring `__pycache__`), records that copy as
-  accepted, and notifies with a link to add the integration. Its `manifest.json` carries the add-on's version
+  accepted, and notifies with a link to add the integration; when it replaces an earlier copy, it only logs that
+  Home Assistant loads the new one at its next restart. Its `manifest.json` carries the add-on's version
   (`tools/check.py`).
 * Once set up, the gate wraps `async_check_written_content` of the Marketplace's `Repository` class and of every
   subclass that defines its own. The Marketplace's own check runs first. For integrations and dashboard cards (the code
@@ -68,6 +69,7 @@ Proposed: the gate integration (third option), opt-in, as the bridge until Home 
 * Without an answer in time (default 120 seconds) the gate refuses; its options can allow instead. When the Marketplace
   lacks the method (another Home Assistant version), the gate changes nothing, does not start, and says so in a
   notification; the status sensor's `marketplace_gate` is `active` only while Home Assistant has the gate loaded.
+  Until it is, the add-on asks Home Assistant every minute instead of at the heartbeat.
 * The gate's logic lives in `gatecore.py` without Home Assistant imports and is tested with the standard library.
 
 The race (second option) cannot win reliably: a scan takes seconds, the import follows in milliseconds. A loader gate
@@ -100,8 +102,9 @@ refuse other places; request and answer go through files, a broken answer refuse
 the setting. `TestMarketplaceGate` in `marketplace_guard/tests/test_marketplace_guard.py`, from the gate's request to
 its decision: a risky new integration is refused, a clean one allowed; an update is refused only when it brings a new
 risk; an allowlisted one is allowed; requests it cannot check are refused; requests wait for the baseline; old answers
-are removed; the gate is installed once, accepted, kept current and not reinstalled for `__pycache__`; without the
-Marketplace it is not installed; the gate state is a fact. On a running Home Assistant: an install refused through the
+are removed; the gate is installed once, accepted, kept current without asking again to add it, and not reinstalled
+for `__pycache__`; without the Marketplace it is not installed; the gate state is a fact, asked for every minute until
+it is active and not at all without the option. On a running Home Assistant: an install refused through the
 Marketplace's dialog, and an allowed one.
 
 ### Toward a hook in Home Assistant
@@ -109,3 +112,5 @@ Marketplace's dialog, and an allowed one.
 The check the gate wraps is the natural place for an official extension point: a way for an integration or app to
 review content the Marketplace has written, before it is loaded, with the Marketplace's own clean-up on a refusal.
 When Home Assistant offers one, the gate is replaced by it, in a new ADR that supersedes this one.
+
+Accepted by the maintainer on 2026-11-09; implemented in pull requests #46 and #47.

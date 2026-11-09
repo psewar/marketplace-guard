@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.1
+- **Status sensor:** until the gate is active, Marketplace Guard asks Home Assistant every minute instead of every 15
+  minutes, so `marketplace_gate` says `active` within a minute after you add the integration.
+- **Gate updates:** an update of the app brings the gate's new version along without the notification that asks to add
+  the integration again; Home Assistant loads it at its next restart, the version before keeps checking until then.
+
 ## 2.4.0
 - **Gate for Marketplace installs (optional, off by default):** with **Check Marketplace installs before they load**,
   Marketplace Guard installs the small integration *Marketplace Guard Gate*. Once added, the Marketplace asks Marketplace

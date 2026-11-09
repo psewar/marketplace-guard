@@ -65,7 +65,10 @@ The gate closes the gap above: before anything the Marketplace wrote can load, i
    puts the small integration *Marketplace Guard Gate* into `custom_components` and sends a notification with a link.
 2. Restart Home Assistant, then add the integration **Marketplace Guard Gate** (the link in the notification, or
    Settings → Devices & services → Add integration).
-3. The status sensor's `marketplace_gate` attribute now says `active`.
+3. The status sensor's `marketplace_gate` attribute says `active` within a minute.
+
+An update of Marketplace Guard brings the gate's new version along; Home Assistant loads it at its next restart, and the
+version before keeps checking until then.
 
 From then on, what Marketplace Guard would quarantine is not installed: the Marketplace puts back what was there (the
 version before, for an update), its install dialog says why, and a notification names the component. Its code never
@@ -371,7 +374,10 @@ Marketplace Guard.
    Benachrichtigung mit einem Link.
 2. Starte Home Assistant neu und füge dann die Integration **Marketplace Guard Gate** hinzu (der Link in der
    Benachrichtigung, oder Einstellungen → Geräte & Dienste → Integration hinzufügen).
-3. Das Attribut `marketplace_gate` des Status-Sensors zeigt jetzt `active`.
+3. Das Attribut `marketplace_gate` des Status-Sensors zeigt innerhalb einer Minute `active`.
+
+Ein Update von Marketplace Guard bringt die neue Version der Gate mit; Home Assistant lädt sie beim nächsten Neustart,
+bis dahin prüft die Version davor weiter.
 
 Ab dann wird nicht installiert, was Marketplace Guard quarantänieren würde: der Marketplace stellt den vorherigen Stand
 wieder her (bei einem Update die Version davor), sein Installationsdialog nennt den Grund, und eine Benachrichtigung

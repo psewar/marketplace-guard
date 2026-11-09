@@ -1510,9 +1510,46 @@ class TestMarketplaceGate(GuardSandbox):
         guard.handle_component(dest, self.opts, self.worker.state)  # the watcher sees it: accepted, not quarantined
         self.assertTrue(os.path.isdir(dest))
         _write(dest, "gatecore.py", "# an older gate\n")
-        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "installed")
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "updated")
         with open(os.path.join(dest, "gatecore.py"), encoding="utf-8") as f:
             self.assertIn("def wrap_check_methods", f.read())
+        # an update of the app brings a new copy of the gate: the integration is already added, so no notification
+        # asks to add it again
+        self.assertEqual(self.titles().count("Marketplace Guard: gate installed"), 1)
+        self.assertEqual(self.worker.state[dest]["hash"], guard.dir_hash(dest))
+
+    def test_until_the_gate_is_active_home_assistant_is_asked_every_minute(self):
+        self.opts.update(marketplace_gate=True, status_sensor=True)
+        now = [1000.0]
+        worker = guard.Worker(self.opts, {"_last_scan": {}}, [self.root], clock=lambda: now[0], core=lambda: True)
+        worker.started = True
+        guard.refresh_environment(self.opts)
+        self.assertEqual(guard._ENV["gate"], "not set up")
+        self.components = ["marketplace", guard.GATE_DOMAIN]  # the operator adds the integration
+        now[0] += guard.GATE_PENDING_CHECK_SECONDS - 1
+        worker.tick()
+        self.assertEqual(guard._ENV["gate"], "not set up")
+        now[0] += 1
+        worker.tick()
+        self.assertEqual(guard._ENV["gate"], "active")
+        sensors = [p for e, p in self.payloads if e == "states/sensor.marketplace_guard"]
+        self.assertEqual(sensors[-1]["attributes"]["marketplace_gate"], "active")
+        # once active, only the heartbeat asks again
+        self.components = ["marketplace"]
+        now[0] += guard.GATE_PENDING_CHECK_SECONDS
+        worker.tick()
+        self.assertEqual(guard._ENV["gate"], "active")
+        now[0] += worker.status_secs
+        worker.tick()
+        self.assertEqual(guard._ENV["gate"], "not set up")
+
+    def test_without_the_option_the_gate_is_not_asked_for(self):
+        asked = []
+        guard._ha_get = lambda endpoint, timeout=20: asked.append(endpoint) or []
+        worker = guard.Worker(self.opts, {"_last_scan": {}}, [self.root], clock=lambda: 5000.0, core=lambda: True)
+        worker.started, worker.last_gate_check = True, 0
+        worker.tick()
+        self.assertNotIn("config", asked)
 
     def test_without_the_marketplace_the_gate_is_not_installed(self):
         self.opts["marketplace_gate"] = True

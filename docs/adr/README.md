@@ -59,8 +59,8 @@ Format: [MADR 4.0](https://adr.github.io/madr/), in English.
 | [0035](0035-docstrings-are-read-as-text-unless-the-code-reads-them.md) | Docstrings are read as text unless the code reads them | accepted | 2026-11-07 |
 | [0036](0036-the-add-on-is-renamed-to-marketplace-guard.md) | The add-on is renamed to Marketplace Guard | accepted | 2026-11-07 |
 | [0037](0037-each-reader-gets-a-limit-that-fits-what-it-costs.md) | Each reader gets a limit that fits what it costs | accepted | 2026-11-07 |
-| [0038](0038-the-published-readme-carries-a-one-click-install-button.md) | The published README carries a one-click install button | proposed | 2026-11-09 |
-| [0039](0039-the-first-start-ends-with-one-summary.md) | The first start ends with one summary | proposed | 2026-11-09 |
-| [0040](0040-pre-checks-can-be-asked-for-through-the-action-addon-stdin.md) | Pre-checks can be asked for through the action hassio.addon_stdin | proposed | 2026-11-09 |
-| [0041](0041-a-web-page-in-the-sidebar-shows-pre-checks-and-restores.md) | A web page in the sidebar shows, pre-checks and restores | proposed | 2026-11-09 |
-| [0042](0042-an-optional-gate-checks-marketplace-installs-before-they-load.md) | An optional gate checks Marketplace installs before they load | proposed | 2026-11-09 |
+| [0038](0038-the-published-readme-carries-a-one-click-install-button.md) | The published README carries a one-click install button | accepted | 2026-11-09 |
+| [0039](0039-the-first-start-ends-with-one-summary.md) | The first start ends with one summary | accepted | 2026-11-09 |
+| [0040](0040-pre-checks-can-be-asked-for-through-the-action-addon-stdin.md) | Pre-checks can be asked for through the action hassio.addon_stdin | accepted | 2026-11-09 |
+| [0041](0041-a-web-page-in-the-sidebar-shows-pre-checks-and-restores.md) | A web page in the sidebar shows, pre-checks and restores | accepted | 2026-11-09 |
+| [0042](0042-an-optional-gate-checks-marketplace-installs-before-they-load.md) | An optional gate checks Marketplace installs before they load | accepted | 2026-11-09 |
