@@ -139,6 +139,18 @@ class TestAddonConfig(unittest.TestCase):
         self.assertIsNone(check.guard_defaults("DEFAULTS = dict(a=1)\n"))
 
 
+class TestGateVersion(unittest.TestCase):
+    def test_the_gate_carries_the_add_ons_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            manifest = os.path.join(d, "manifest.json")
+            self.assertEqual(len(check.gate_version_problems("2.4.0", manifest)), 1)  # missing
+            for text, problems in (('{"version": "2.4.0"}', 0), ('{"version": "2.3.0"}', 1), ("not json", 1)):
+                with self.subTest(text=text):
+                    with open(manifest, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    self.assertEqual(len(check.gate_version_problems("2.4.0", manifest)), problems)
+
+
 class TestOverallExit(unittest.TestCase):
     def result(self, state):
         return check.Result("x", state, "", [])

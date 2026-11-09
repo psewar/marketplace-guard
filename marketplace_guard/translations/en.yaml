@@ -129,3 +129,12 @@ configuration:
       When a quarantined new integration is already running in Home Assistant (the Marketplace sets it
       up without a restart), restart Home Assistant at once so it stops. Off: the notification asks you
       to restart.
+  marketplace_gate:
+    name: Check Marketplace installs before they load
+    description: >-
+      Off by default. Installs the small integration "Marketplace Guard Gate": the Marketplace then asks
+      Marketplace Guard before an integration or dashboard card it wrote can load, and puts back what
+      was there when it would be quarantined, so its code never runs. After turning it on, restart Home
+      Assistant and add the integration (the notification has the link). It hooks into the Marketplace,
+      which a Home Assistant update can change; the status sensor's "marketplace_gate" says whether it
+      works.

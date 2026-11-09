@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.0
+- **Gate for Marketplace installs (optional, off by default):** with **Check Marketplace installs before they load**,
+  Marketplace Guard installs the small integration *Marketplace Guard Gate*. Once added, the Marketplace asks Marketplace
+  Guard before an integration or dashboard card it wrote can load; what would be quarantined is not installed: the
+  Marketplace puts back what was there, its install dialog says why, and the code never runs. It hooks into an internal
+  part of the Marketplace: when a Home Assistant update changes it, the gate says so and does not start (ADR-0042).
+- **Status sensor:** the attribute `marketplace_gate` says whether the gate is `active`.
+
 ## 2.3.0
 - **Web page:** Marketplace Guard has a page in Home Assistant's sidebar (for administrators; turn on *Show in sidebar*
   on the Info tab): status, a field to pre-check a repository, the components in quarantine with their reports, and

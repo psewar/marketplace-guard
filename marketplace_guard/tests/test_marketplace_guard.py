@@ -1417,6 +1417,117 @@ class TestWebPage(GuardSandbox):
         self.assertTrue(os.path.isdir(entry["quarantined"]))
 
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gate", "marketplace_guard_gate"))
+import gatecore  # noqa: E402
+
+
+class TestMarketplaceGate(GuardSandbox):
+    """The app answers the gate before Marketplace content can load, and installs the gate (ADR-0042)."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = self.tmp.name  # ha_storage is <tmp>/nope, so the configuration folder is <tmp>
+        self.components = ["marketplace"]
+        guard._ha_get = self.get
+        self.worker = guard.Worker(self.opts, {"_last_scan": {}}, [self.root], clock=lambda: 1000.0, core=lambda: True)
+        self.worker.started = True
+
+    def get(self, endpoint, timeout=20):
+        return {"components": self.components} if endpoint == "config" else []
+
+    def ask(self, rel, category="integration", update=False):
+        """What the gate does: write a request; the worker answers; read the answer and decide."""
+        state, rid, payload = gatecore.build_request(self.config, os.path.join(self.config, *rel.split("/")),
+                                                     "owner/repo", category, update)
+        gatecore.write_request(self.config, rid, payload)
+        self.worker.process_ready()
+        return gatecore.outcome(gatecore.read_answer(self.config, rid), "refuse")
+
+    def test_a_risky_new_integration_is_refused_before_it_can_load(self):
+        self.component("evil_comp")
+        decision, message = self.ask("custom_components/evil_comp")
+        self.assertEqual(decision, "refuse")
+        self.assertIn("(HIGH)", message)
+        self.assertIn("⚠️ Marketplace Guard: evil_comp refused before it could load (HIGH)", self.titles())
+        self.assertNotIn(os.path.join(self.root, "evil_comp"), self.worker.state)  # the Marketplace removes it
+
+    def test_a_clean_integration_is_allowed(self):
+        self.component("plain_comp", "X = 1\n")
+        self.assertEqual(self.ask("custom_components/plain_comp")[0], "allow")
+        self.assertEqual(self.titles(), [])
+
+    def test_an_update_is_refused_only_when_it_brings_a_new_risk(self):
+        comp = self.component("tool")
+        self.worker.state[comp] = {"hash": "old", "verdict": "clean", "risk": []}
+        self.assertEqual(self.ask("custom_components/tool", update=True)[0], "refuse")
+        self.opts["quarantine_updates"] = False
+        self.assertEqual(self.ask("custom_components/tool", update=True)[0], "allow")
+
+    def test_an_allowlisted_integration_is_allowed(self):
+        self.component("evil_comp")
+        self.opts["allowlist"] = ["evil_comp"]
+        self.assertEqual(self.ask("custom_components/evil_comp")[0], "allow")
+
+    def test_requests_it_cannot_check_are_refused(self):
+        _write(self.config, "custom_components/a_file", "x")
+        self.component("evil_comp")
+        for rel, category in (("custom_components/missing", "integration"), ("custom_components/a_file", "integration"),
+                              ("other/evil_comp", "integration"), ("custom_components/evil_comp", "theme")):
+            with self.subTest(rel=rel, category=category):
+                self.assertEqual(self.ask(rel, category)[0], "refuse")
+        for raw in (b"not json", b"{" + b" " * guard.GATE_MAX_REQUEST + b"}"):
+            with self.subTest(raw=raw[:10]):
+                rid = "0123456789abcdef"
+                _write(guard.gate_dir(self.opts, "requests"), f"{rid}.json", raw.decode())
+                self.worker.process_ready()
+                self.assertEqual(gatecore.outcome(gatecore.read_answer(self.config, rid), "allow")[0], "refuse")
+
+    def test_requests_wait_for_the_baseline(self):
+        self.component("evil_comp")
+        self.worker = guard.Worker(self.opts, {}, [self.root], clock=lambda: 1000.0, core=lambda: False)
+        state, rid, payload = gatecore.build_request(self.config, os.path.join(self.root, "evil_comp"), "o/r",
+                                                     "integration", False)
+        gatecore.write_request(self.config, rid, payload)
+        self.worker.process_ready()
+        self.assertEqual(len(guard.gate_requests(self.opts)), 1)
+
+    def test_answers_nobody_took_are_removed_after_a_while(self):
+        _write(guard.gate_dir(self.opts, "verdicts"), "0123456789abcdef.json", "{}")
+        guard.gate_requests(self.opts, now=time.time() + guard.GATE_ANSWER_KEEP_SECONDS + 1)
+        self.assertEqual(os.listdir(guard.gate_dir(self.opts, "verdicts")), [])
+
+    def test_the_gate_is_installed_once_accepted_and_kept_current(self):
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "off")
+        self.opts["marketplace_gate"] = True
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "installed")
+        dest = os.path.join(self.root, guard.GATE_DOMAIN)
+        self.assertTrue(os.path.isfile(os.path.join(dest, "manifest.json")))
+        self.assertTrue(self.worker.state[dest]["gate"])
+        self.assertIn("Marketplace Guard: gate installed", self.titles())
+        _write(dest, "__pycache__/gatecore.cpython-313.pyc", "bytecode Home Assistant writes")
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "unchanged")
+        self.assertEqual(self.titles().count("Marketplace Guard: gate installed"), 1)
+        guard.handle_component(dest, self.opts, self.worker.state)  # the watcher sees it: accepted, not quarantined
+        self.assertTrue(os.path.isdir(dest))
+        _write(dest, "gatecore.py", "# an older gate\n")
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "installed")
+        with open(os.path.join(dest, "gatecore.py"), encoding="utf-8") as f:
+            self.assertIn("def wrap_check_methods", f.read())
+
+    def test_without_the_marketplace_the_gate_is_not_installed(self):
+        self.opts["marketplace_gate"] = True
+        self.components = []
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "no-marketplace")
+        self.assertFalse(os.path.exists(os.path.join(self.root, guard.GATE_DOMAIN)))
+
+    def test_the_gate_state_is_a_fact(self):
+        self.assertEqual(guard.gate_state(self.opts), "off")
+        self.opts["marketplace_gate"] = True
+        self.assertEqual(guard.gate_state(self.opts), "not set up")
+        self.components = ["marketplace", guard.GATE_DOMAIN]
+        self.assertEqual(guard.gate_state(self.opts), "active")
+
+
 def _storage(dirpath, key, data):
     os.makedirs(dirpath, exist_ok=True)
     with open(os.path.join(dirpath, key), "w", encoding="utf-8") as f:

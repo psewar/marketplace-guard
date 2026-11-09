@@ -49,14 +49,37 @@ A component is scanned as soon as its files settle (20 seconds after the last ch
 
 **Home Assistant 2026.11 and later (Marketplace):** HACS is built into Home Assistant as the Marketplace, and it sets up
 a new integration right after the download, **without a restart**. Marketplace Guard still finds and quarantines it
-within seconds, but its code may already have run, so pre-check a repository *before* you install it (next section).
-After quarantining a new integration, the notification says whether it is running in Home Assistant;
+within seconds, but its code may already have run, so pre-check a repository *before* you install it, or turn on the
+gate (both below). After quarantining a new integration, the notification says whether it is running in Home Assistant;
 **Restart after quarantining a running integration** restarts Home Assistant for you. Updates still need a restart, so
 **Quarantine risky updates** (on by default) stops an update that brings a new risk before it loads. Marketplace Guard
 reads the Marketplace's records, and those of HACS on older versions of Home Assistant.
 
 A component Marketplace Guard finds at a later start without having seen it before (installed while the app was
 stopped) counts as newly installed.
+
+#### Stop risky Marketplace installs before they load (optional)
+The gate closes the gap above: before anything the Marketplace wrote can load, it asks Marketplace Guard.
+
+1. Turn on **Check Marketplace installs before they load** on the **Configuration** tab, save and restart the app. It
+   puts the small integration *Marketplace Guard Gate* into `custom_components` and sends a notification with a link.
+2. Restart Home Assistant, then add the integration **Marketplace Guard Gate** (the link in the notification, or
+   Settings → Devices & services → Add integration).
+3. The status sensor's `marketplace_gate` attribute now says `active`.
+
+From then on, what Marketplace Guard would quarantine is not installed: the Marketplace puts back what was there (the
+version before, for an update), its install dialog says why, and a notification names the component. Its code never
+runs. The scan takes a few seconds, and the install dialog waits for it. Integrations and dashboard cards are checked;
+themes and templates are not. The AI second opinion follows after the install, as before.
+
+The gate's options (Settings → Devices & services → Marketplace Guard Gate → Configure) say what happens when
+Marketplace Guard does not answer (default: refuse, so nothing is installed while the app is stopped) and how long to
+wait (120 seconds).
+
+The gate hooks into an internal part of the Marketplace, which a Home Assistant update can change. Then the gate does
+not start, a notification says so, and `marketplace_gate` shows `not set up`; until Marketplace Guard is updated,
+pre-check repositories before you install them. To turn it off: delete the integration Marketplace Guard Gate, turn the
+option off, delete `custom_components/marketplace_guard_gate` and restart Home Assistant.
 
 #### Check a repository before you install it
 **On the web page:** type `owner/repo` or the repository's GitHub URL into the field and select **Pre-check**.
@@ -145,6 +168,7 @@ quarantined, also not for a later update.
 | `last_scan_time`, `last_component`, `last_verdict`, `last_action` | the latest scan |
 | `notify_targets_available` | the notify services Home Assistant has, for **Notification targets** |
 | `app_slug` | this app's slug, for the action `hassio.addon_stdin` |
+| `marketplace_gate` | `off`, `active`, `not set up` (restart Home Assistant and add the integration, or see the notification), `unknown` |
 | `notify_problems` | notification targets Home Assistant does not have |
 | `ai_review`, `ai_task_entities`, `ai_review_pending` | state of the AI second opinion (see [Troubleshooting](#troubleshooting)) |
 | `python_version`, `bandit_version`, `pip_audit_version`, `tar_data_filter`, `code_source`, `code_sha256` | what runs |
@@ -175,6 +199,7 @@ The defaults work without changes. Every option is also described on the **Confi
 | Allowlist | empty | Components (folder name) or repositories (`owner/repo`) that are never quarantined. A repository counts only for components the Marketplace or HACS installed. |
 | Quarantine risky updates | on | Quarantines an update that brings a risk at the quarantine threshold the version before did not have. The integration is then missing after the next restart until you install a version you trust. Off: such an update is only reported. |
 | Restart after quarantining a running integration | off | Restarts Home Assistant at once when a quarantined new integration is already running. Off: the notification asks you to restart. |
+| Check Marketplace installs before they load | off | Installs the gate, which refuses what would be quarantined before its code runs (see above). |
 | AI second opinion | off | Asks a Home Assistant AI Task to judge new and changed components and pre-checked repositories. |
 | AI Task, AI Task fallback | empty | Which AI Task entity to use (empty: the one Home Assistant prefers), and a second one if the first fails. |
 | Let AI trigger quarantine | off | Lets an AI verdict of *malicious* quarantine on its own. |
@@ -266,7 +291,7 @@ determined author can evade it. Minified frontend bundles are barely analysable 
 are informational only. The dependency check sees only the requirements a component pins to an exact version, not the
 packages those depend on, and needs a connection to PyPI (without one, the report says which requirements were not
 audited). Since Home Assistant 2026.11 a new integration can run before Marketplace Guard has scanned it (see above);
-the pre-check is the way to look first. Treat Marketplace Guard as a strong filter and tripwire, not a certificate of
+the gate and the pre-check are the ways to look first. Treat Marketplace Guard as a strong filter and tripwire, not a certificate of
 safety. Keeping to few, popular, actively maintained repositories remains the foundation.
 
 ### Troubleshooting
@@ -328,14 +353,40 @@ Urteil:
 **Home Assistant 2026.11 und neuer (Marketplace):** HACS ist als Marketplace in Home Assistant eingebaut und richtet
 eine neue Integration direkt nach dem Download ein, **ohne Neustart**. Marketplace Guard findet und quarantäniert sie
 weiterhin innerhalb von Sekunden, ihr Code kann aber schon gelaufen sein: prüfe ein Repository deshalb *vor* der
-Installation (nächster Abschnitt). Nach der Quarantäne einer neuen Integration sagt die Benachrichtigung, ob sie in Home
-Assistant läuft; **Neustart nach Quarantäne einer laufenden Integration** startet Home Assistant für dich neu. Updates
+Installation, oder schalte die Gate ein (beides unten). Nach der Quarantäne einer neuen Integration sagt die
+Benachrichtigung, ob sie in Home Assistant läuft; **Neustart nach Quarantäne einer laufenden Integration** startet Home Assistant für dich neu. Updates
 brauchen weiterhin einen Neustart, daher stoppt **Riskante Updates quarantänieren** (standardmäßig an) ein Update mit
 neuem Risiko, bevor es geladen wird. Marketplace Guard liest die Aufzeichnungen des Marketplace und bei älteren
 Home-Assistant-Versionen die von HACS.
 
 Findet Marketplace Guard bei einem späteren Start eine Komponente, die es noch nie gesehen hat (installiert, während die
 App gestoppt war), gilt sie als neu installiert.
+
+#### Riskante Marketplace-Installationen stoppen, bevor sie laden (optional)
+Die Gate schließt die Lücke oben: bevor etwas, das der Marketplace geschrieben hat, geladen werden kann, fragt sie
+Marketplace Guard.
+
+1. Schalte im Tab **Konfiguration** **Marketplace-Installationen vor dem Laden prüfen** ein, speichere und starte die
+   App neu. Sie legt die kleine Integration *Marketplace Guard Gate* nach `custom_components` und schickt eine
+   Benachrichtigung mit einem Link.
+2. Starte Home Assistant neu und füge dann die Integration **Marketplace Guard Gate** hinzu (der Link in der
+   Benachrichtigung, oder Einstellungen → Geräte & Dienste → Integration hinzufügen).
+3. Das Attribut `marketplace_gate` des Status-Sensors zeigt jetzt `active`.
+
+Ab dann wird nicht installiert, was Marketplace Guard quarantänieren würde: der Marketplace stellt den vorherigen Stand
+wieder her (bei einem Update die Version davor), sein Installationsdialog nennt den Grund, und eine Benachrichtigung
+nennt die Komponente. Ihr Code läuft nie. Der Scan dauert ein paar Sekunden, der Installationsdialog wartet darauf.
+Geprüft werden Integrationen und Dashboard-Karten, keine Themes und Vorlagen. Die KI-Zweitmeinung folgt wie bisher nach
+der Installation.
+
+Die Optionen der Gate (Einstellungen → Geräte & Dienste → Marketplace Guard Gate → Konfigurieren) legen fest, was
+passiert, wenn Marketplace Guard nicht antwortet (Standard: ablehnen, solange die App gestoppt ist, wird also nichts
+installiert), und wie lange gewartet wird (120 Sekunden).
+
+Die Gate hängt sich in einen internen Teil des Marketplace ein, den ein Home-Assistant-Update ändern kann. Dann startet
+die Gate nicht, eine Benachrichtigung sagt das, und `marketplace_gate` zeigt `not set up`; bis Marketplace Guard
+aktualisiert ist, prüfe Repositories vor der Installation vor. Zum Abschalten: die Integration Marketplace Guard Gate
+löschen, die Option ausschalten, `custom_components/marketplace_guard_gate` löschen und Home Assistant neu starten.
 
 #### Ein Repository vor der Installation prüfen
 **Auf der Webseite:** `owner/repo` oder die GitHub-URL des Repositorys in das Feld eintragen und **Pre-check** wählen.
@@ -428,6 +479,7 @@ trotzdem gescannt und gemeldet, aber nie quarantäniert, auch nicht bei einem sp
 | `last_scan_time`, `last_component`, `last_verdict`, `last_action` | der letzte Scan |
 | `notify_targets_available` | die notify-Dienste, die Home Assistant hat, für **Benachrichtigungs-Ziele** |
 | `app_slug` | der Slug dieser App, für die Aktion `hassio.addon_stdin` |
+| `marketplace_gate` | `off`, `active`, `not set up` (Home Assistant neu starten und die Integration hinzufügen, oder siehe die Benachrichtigung), `unknown` |
 | `notify_problems` | Benachrichtigungs-Ziele, die Home Assistant nicht hat |
 | `ai_review`, `ai_task_entities`, `ai_review_pending` | Stand der KI-Zweitmeinung (siehe [Fehlersuche](#fehlersuche)) |
 | `python_version`, `bandit_version`, `pip_audit_version`, `tar_data_filter`, `code_source`, `code_sha256` | was läuft |
@@ -458,6 +510,7 @@ Die Standardwerte funktionieren ohne Änderung. Jede Option ist auch im Tab **Ko
 | Allowlist | leer | Komponenten (Ordnername) oder Repositories (`owner/repo`), die nie quarantäniert werden. Ein Repository zählt nur für Komponenten, die der Marketplace oder HACS installiert hat. |
 | Riskante Updates quarantänieren | an | Quarantäniert ein Update, das ein Risiko ab der Quarantäne-Schwelle mitbringt, das die Version davor nicht hatte. Die Integration fehlt dann nach dem nächsten Neustart, bis du eine Version installierst, der du vertraust. Aus: ein solches Update wird nur gemeldet. |
 | Neustart nach Quarantäne einer laufenden Integration | aus | Startet Home Assistant sofort neu, wenn eine quarantänierte neue Integration schon läuft. Aus: die Benachrichtigung bittet dich um den Neustart. |
+| Marketplace-Installationen vor dem Laden prüfen | aus | Installiert die Gate, die ablehnt, was quarantäniert würde, bevor sein Code läuft (siehe oben). |
 | KI-Zweitmeinung | aus | Lässt eine AI-Task von Home Assistant neue und geänderte Komponenten und vorgeprüfte Repositories beurteilen. |
 | AI-Task, KI-Task-Fallback | leer | Welche AI-Task-Entität genutzt wird (leer: die, die Home Assistant bevorzugt), und eine zweite, falls die erste scheitert. |
 | KI darf Quarantäne auslösen | aus | Lässt ein KI-Urteil *malicious* allein quarantänieren. |
@@ -553,8 +606,8 @@ Malware-Garantie: ein entschlossener Autor kann sie umgehen. Minifizierte Fronte
 bewertbar, daher ist die JavaScript-Heuristik nur informativ. Die Abhängigkeitsprüfung sieht nur die Abhängigkeiten,
 die eine Komponente auf eine genaue Version festlegt, nicht deren eigene Abhängigkeiten, und braucht eine Verbindung zu
 PyPI (ohne sie nennt der Bericht die nicht geprüften Abhängigkeiten). Seit Home Assistant 2026.11 kann eine neue
-Integration laufen, bevor Marketplace Guard sie gescannt hat (siehe oben); die Vorprüfung ist der Weg, vorher
-hinzusehen. Verstehe Marketplace Guard als starken Filter und Stolperdraht, nicht als Sicherheitszertifikat. Wenige,
+Integration laufen, bevor Marketplace Guard sie gescannt hat (siehe oben); die Gate und die Vorprüfung sind die Wege,
+vorher hinzusehen. Verstehe Marketplace Guard als starken Filter und Stolperdraht, nicht als Sicherheitszertifikat. Wenige,
 populäre, aktiv gepflegte Repositories zu nutzen bleibt die Grundlage.
 
 ### Fehlersuche

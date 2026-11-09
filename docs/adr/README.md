@@ -63,3 +63,4 @@ Format: [MADR 4.0](https://adr.github.io/madr/), in English.
 | [0039](0039-the-first-start-ends-with-one-summary.md) | The first start ends with one summary | proposed | 2026-11-09 |
 | [0040](0040-pre-checks-can-be-asked-for-through-the-action-addon-stdin.md) | Pre-checks can be asked for through the action hassio.addon_stdin | proposed | 2026-11-09 |
 | [0041](0041-a-web-page-in-the-sidebar-shows-pre-checks-and-restores.md) | A web page in the sidebar shows, pre-checks and restores | proposed | 2026-11-09 |
+| [0042](0042-an-optional-gate-checks-marketplace-installs-before-they-load.md) | An optional gate checks Marketplace installs before they load | proposed | 2026-11-09 |

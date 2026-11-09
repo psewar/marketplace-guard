@@ -1,0 +1,11 @@
+{
+  "domain": "marketplace_guard_gate",
+  "name": "Marketplace Guard Gate",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["marketplace", "persistent_notification"],
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "single_config_entry": true,
+  "version": "2.4.0"
+}

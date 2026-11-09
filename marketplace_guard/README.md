@@ -30,8 +30,8 @@ and removed repositories.
 2. After the first scan one notification sums up what was recorded, what is worth a look and what you can set next;
    later you get one only when something needs your attention. The sensor `sensor.marketplace_guard` shows how many
    components are in quarantine.
-3. Optional, on the **Configuration** tab: a push target for your phone (`mobile_app_<device>`), and the AI second
-   opinion.
+3. Optional, on the **Configuration** tab: a push target for your phone (`mobile_app_<device>`), the AI second
+   opinion, and the gate that stops risky Marketplace installs before their code runs.
 
 The **Documentation** tab explains everyday use (pre-checks, reports, restoring a component), every option, and the
 limits of static analysis.
@@ -60,7 +60,8 @@ Listen kritischer und entfernter Repositories.
 2. Nach dem ersten Scan fasst eine Benachrichtigung zusammen, was aufgenommen wurde, was einen Blick wert ist und was du
    als Nächstes einstellen kannst; danach kommt eine nur, wenn etwas deine Aufmerksamkeit braucht. Der Sensor
    `sensor.marketplace_guard` zeigt, wie viele Komponenten in Quarantäne sind.
-3. Optional im Tab **Konfiguration**: ein Push-Ziel für dein Handy (`mobile_app_<gerät>`) und die KI-Zweitmeinung.
+3. Optional im Tab **Konfiguration**: ein Push-Ziel für dein Handy (`mobile_app_<gerät>`), die KI-Zweitmeinung und die
+   Gate, die riskante Marketplace-Installationen stoppt, bevor ihr Code läuft.
 
 Der Tab **Dokumentation** erklärt die tägliche Nutzung (Vorprüfung, Berichte, Komponente wiederherstellen), jede
 Option und die Grenzen statischer Analyse.

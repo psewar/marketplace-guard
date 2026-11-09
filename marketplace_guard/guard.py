@@ -56,6 +56,7 @@ DEFAULTS = {
     # Home Assistant's Marketplace (ADR-0024, ADR-0025)
     "quarantine_updates": True,
     "restart_after_quarantine": False,
+    "marketplace_gate": False,
 }
 
 
@@ -240,7 +241,8 @@ def refresh_environment(opts):
     _, problems = notify_targets(opts.get("notify_services"), notify_available)
     new = {"ai": plan, "notify_skip": [s for s, _ in problems], "notify_problems": [f"{s}: {why}" for s, why in problems],
            "notify_available": None if notify_available is None
-           else sorted(s for s in notify_available if s not in NOT_A_TARGET)}
+           else sorted(s for s in notify_available if s not in NOT_A_TARGET),
+           "gate": gate_state(opts)}
     if new == _ENV:
         return
     _ENV.update(new)
@@ -321,6 +323,7 @@ def update_status(opts, state, last=None):
     attrs["notify_problems"] = _ENV["notify_problems"]
     attrs["notify_targets_available"] = _ENV.get("notify_available") or []
     attrs["app_slug"] = app_slug()  # for the action hassio.addon_stdin (ADR-0040)
+    attrs["marketplace_gate"] = _ENV.get("gate") or "off"
     attrs["ai_review_pending"] = [os.path.basename(k) for k, v in state.items()
                                   if not k.startswith("_") and isinstance(v, dict) and v.get("ai_pending")][:50]
     attrs.update(_RUNTIME)
@@ -1565,6 +1568,11 @@ class Worker:
         """Handle the components whose writes have settled (debounce_seconds without a change)."""
         if self.first_run and not self.started:
             return  # the baseline comes first
+        for path, rid in gate_requests(self.opts):  # the Marketplace waits for these (ADR-0042)
+            try:
+                answer_gate(path, rid, self.opts, self.state)
+            except OSError as e:  # file system fault: the gate gets no answer and refuses unless set to allow
+                log(f"gate request {rid} failed: {e}")
         with self.lock:
             cut = self.clock() - self.opts["debounce_seconds"]
             ready = sorted(c for c, ts in self.dirty.items() if ts <= cut)
@@ -1595,6 +1603,13 @@ class Worker:
 
     def startup(self, core_ready):
         log("Home Assistant core API ready" if core_ready else "core API not ready after wait - continuing anyway")
+        try:
+            gate = install_gate(self.opts, self.state)
+        except OSError as e:  # file system fault while copying: reported, the guard runs on
+            gate = "failed"
+            log(f"marketplace gate: installing it failed: {e}")
+        if gate != "off":
+            log(f"marketplace gate: {gate}")
         refresh_environment(self.opts)
         self.state["_last_scan"] = {"last_action": "startup", "last_scan_time": now_iso()}
         if self.opts["scan_on_start"]:
@@ -1672,6 +1687,185 @@ class Worker:
             except Exception as e:  # like a failed scan: one component must not stop the daemon
                 log(f"AI review retry failed: {e}")
             update_status(self.opts, self.state)
+
+
+# ---------------------------------------------------------------- Marketplace gate (ADR-0042)
+GATE_DOMAIN = "marketplace_guard_gate"
+GATE_MAX_REQUEST = 4096
+GATE_ANSWER_KEEP_SECONDS = 600
+GATE_ADD_LINK = f"https://my.home-assistant.io/redirect/config_flow_start/?domain={GATE_DOMAIN}"
+
+
+def config_dir(opts):
+    """Home Assistant's configuration folder as this app sees it, derived from the .storage path."""
+    return os.path.dirname(opts["ha_storage"].rstrip("/"))
+
+
+def gate_dir(opts, kind):
+    return os.path.join(config_dir(opts), "marketplace_guard", "gate", kind)
+
+
+def gate_source():
+    """The gate integration shipped with this app: next to this file, else in the image (an override folder carries
+    only guard.py and scanner.py). None when neither has it."""
+    for base in (os.path.dirname(os.path.abspath(__file__)), BUILT_IN_CODE):
+        p = os.path.join(base, "gate", GATE_DOMAIN)
+        if os.path.isfile(os.path.join(p, "manifest.json")):
+            return p
+    return None
+
+
+def _gate_files(root):
+    """{relative path: bytes} of a gate folder, without the bytecode Home Assistant writes into it."""
+    files = {}
+    for dp, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        for n in names:
+            p = os.path.join(dp, n)
+            if os.path.isfile(p) and not os.path.islink(p):
+                with open(p, "rb") as f:
+                    files[os.path.relpath(p, root)] = f.read()
+    return files
+
+
+def install_gate(opts, state):
+    """Put the gate integration into custom_components when the option asks for it, and accept that copy as installed
+    (ADR-0042). Returns the outcome as a fact: "off" | "no-source" | "no-marketplace" | "unchanged" | "installed"."""
+    if not opts.get("marketplace_gate"):
+        return "off"
+    src = gate_source()
+    if not src:
+        log("marketplace gate: the gate integration is not in this image")
+        return "no-source"
+    dest = os.path.join(config_dir(opts), "custom_components", GATE_DOMAIN)
+    if os.path.islink(dest):
+        log(f"marketplace gate: {dest} is a link - not touched")
+        return "no-source"
+    if os.path.isdir(dest) and _gate_files(dest) == _gate_files(src):
+        outcome = "unchanged"
+    elif loaded_in_home_assistant("marketplace") is False:
+        log("marketplace gate: Home Assistant has no Marketplace (it came with 2026.11) - the gate is not installed")
+        return "no-marketplace"
+    else:
+        tmp = dest + ".new"
+        if os.path.lexists(tmp):
+            shutil.rmtree(tmp)
+        shutil.copytree(src, tmp, ignore=shutil.ignore_patterns("__pycache__"))
+        if os.path.lexists(dest):
+            shutil.rmtree(dest)  # an earlier version of the gate
+        os.replace(tmp, dest)
+        outcome = "installed"
+    entry = state.get(dest)
+    if outcome == "installed" or not (isinstance(entry, dict) and entry.get("gate")):
+        state[dest] = {"hash": dir_hash(dest), "hv": HASH_VERSION, "verdict": "clean", "ts": now_iso(), "gate": True}
+        save_state(state)
+    if outcome == "installed":
+        log(f"marketplace gate: installed into {dest}")
+        notify(opts["notify_services"], "Marketplace Guard: gate installed",
+               "The gate that checks Marketplace installs before they load is in place. Restart Home Assistant, then "
+               f"add the integration **Marketplace Guard Gate**: {GATE_ADD_LINK}", tag="gate")
+    return outcome
+
+
+def gate_state(opts):
+    """Whether the gate checks Marketplace installs, as a fact: "off" | "active" | "not set up" (installed, but Home
+    Assistant has not loaded it: restart, then add the integration) | "unknown" (Home Assistant could not be asked)."""
+    if not opts.get("marketplace_gate"):
+        return "off"
+    loaded = loaded_in_home_assistant(GATE_DOMAIN)
+    return {True: "active", False: "not set up", None: "unknown"}[loaded]
+
+
+def gate_requests(opts, now=None):
+    """The waiting requests of the gate, oldest first: [(file, id)]. Removes answers nobody took for a while."""
+    found = []
+    d = gate_dir(opts, "requests")
+    if os.path.isdir(d):
+        for n in os.listdir(d):
+            rid = n[:-5] if n.endswith(".json") else ""
+            p = os.path.join(d, n)
+            if re.fullmatch(r"[0-9a-f]{16}", rid) and os.path.isfile(p) and not os.path.islink(p):
+                found.append((os.path.getmtime(p), p, rid))
+    answers = gate_dir(opts, "verdicts")
+    if os.path.isdir(answers):
+        cut = (now or time.time()) - GATE_ANSWER_KEEP_SECONDS
+        for n in os.listdir(answers):
+            p = os.path.join(answers, n)
+            if os.path.isfile(p) and not os.path.islink(p) and os.path.getmtime(p) < cut:
+                os.remove(p)
+    return [(p, rid) for _, p, rid in sorted(found)]
+
+
+def _gate_target(request, opts):
+    """The component a request names, as the state key: (key, None), or (None, reason) when it is not a folder directly
+    in a watched folder."""
+    if not isinstance(request, dict) or not isinstance(request.get("path"), str):
+        return None, "the request could not be read"
+    if request.get("category") not in ("integration", "plugin"):
+        return None, f"category {str(request.get('category'))[:40]} is not checked"
+    rel = request["path"]
+    if rel.startswith("/") or ".." in rel.split("/"):
+        return None, "the path leaves the configuration folder"
+    full = os.path.abspath(os.path.join(config_dir(opts), *rel.split("/")))
+    root = next((r for r in opts["watch_paths"] if os.path.abspath(r) == os.path.dirname(full)), None)
+    if root is None:
+        return None, "the content is not in a watched folder"
+    key = os.path.join(root, os.path.basename(full))
+    if os.path.islink(key) or not os.path.isdir(key):
+        return None, "the content is not a folder"
+    return key, None
+
+
+def _gate_answer(rid, decision, verdict, summary, opts):
+    d = gate_dir(opts, "verdicts")
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, f".{rid}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"id": rid, "decision": decision, "verdict": verdict, "summary": summary}, f)
+    os.replace(tmp, os.path.join(d, f"{rid}.json"))
+    return decision
+
+
+def answer_gate(path, rid, opts, state):
+    """Answer one request of the gate with the decision a new install or an update would get, while the content has
+    not loaded yet (ADR-0042): what would be quarantined is refused. Returns the decision as a fact: "allow" |
+    "refuse". The static scan decides; the AI review follows on the usual way once the content is allowed."""
+    with open(path, "rb") as f:
+        raw = f.read(GATE_MAX_REQUEST + 1)
+    os.remove(path)  # taken
+    request = None
+    if len(raw) <= GATE_MAX_REQUEST:
+        try:  # written inside Home Assistant: parsed as untrusted text, parsing is the check
+            request = json.loads(raw.decode("utf-8", errors="replace"))
+        except ValueError:
+            request = None
+    key, problem = _gate_target(request, opts)
+    if problem:
+        log(f"gate: request {rid} refused: {problem}")
+        return _gate_answer(rid, "refuse", "?", problem, opts)
+    name = os.path.basename(key)
+    repository = str(request.get("repository") or "")[:200]
+    res = scan_one(key, opts, full_name=repository or None)
+    write_report(opts, name, scanner.render_report(res))
+    prev = state.get(key)
+    is_new = not isinstance(prev, dict) or bool(prev.get("quarantined"))
+    prior = None if is_new else {"verdict": prev.get("verdict"), "risk": prev.get("risk")}
+    refuse = _decide(name, res, opts, is_new, prior) in QUARANTINE_ACTIONS
+    summary = f"the report is {name}.txt in the reports folder of Marketplace Guard"
+    _gate_answer(rid, "refuse" if refuse else "allow", res["verdict"], summary, opts)
+    if not refuse:
+        log(f"gate: {name} ({repository or 'no repository'}) -> {res['verdict']}, allowed")
+        return "allow"
+    what = "update" if not is_new else "install"
+    log(f"gate: {name} ({repository or 'no repository'}) -> {res['verdict']}, {what} REFUSED before loading")
+    notify(opts["notify_services"], f"⚠️ Marketplace Guard: {name} refused before it could load ({res['verdict'].upper()})",
+           short(res, opts) + f"\nThe Marketplace {what} of {md_code(repository or name)} was refused: the Marketplace "
+           "put back what was there, and its code never ran.", tag=name)
+    state["_last_scan"] = {"last_component": name, "last_verdict": res["verdict"], "last_action": "refused (gate)",
+                           "last_scan_time": now_iso()}
+    save_state(state)
+    update_status(opts, state)
+    return "refuse"
 
 
 # ---------------------------------------------------------------- web page (ingress, ADR-0041)

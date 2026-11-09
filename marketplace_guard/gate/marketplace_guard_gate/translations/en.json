@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Marketplace Guard Gate",
+        "description": "Before anything the Marketplace installs can load, the gate asks the Marketplace Guard app. What the app would quarantine is not installed: the Marketplace puts back what was there, and the install dialog says why."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "The gate is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Marketplace Guard Gate",
+        "data": {
+          "on_no_answer": "When Marketplace Guard does not answer",
+          "timeout": "Wait for an answer"
+        },
+        "data_description": {
+          "on_no_answer": "Refuse: nothing is installed while the app is stopped. Allow: the install goes ahead unchecked, as without the gate.",
+          "timeout": "A scan takes seconds; large repositories and the dependency check can take longer."
+        }
+      }
+    }
+  },
+  "selector": {
+    "on_no_answer": {
+      "options": {
+        "refuse": "Refuse the install",
+        "allow": "Allow the install"
+      }
+    }
+  }
+}

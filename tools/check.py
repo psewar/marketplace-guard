@@ -12,7 +12,8 @@ What each check looks at:
   resolves to a file or folder inside the repository, and every repository path AGENTS.md names in backticks exists.
 - addon-config: in marketplace_guard/config.yaml the options are a subset of the schema; every schema option has a name and
   a description in every translation (en and de at least), and no translation names an option the schema lacks;
-  every schema option is in DEFAULTS in guard.py, with the same value where options sets a default. It reads YAML with
+  every schema option is in DEFAULTS in guard.py, with the same value where options sets a default; the gate
+  integration's manifest.json carries the version of config.yaml. It reads YAML with
   PyYAML; without PyYAML this check does not run and says how to install it.
 - unit-tests (--all): the add-on's tests in marketplace_guard/tests and the tests of these tools (tools/test_*.py).
 - site-neutral (--all): tools/check_neutral.py (ADR-0011).
@@ -282,6 +283,20 @@ def guard_defaults(source):
     return None
 
 
+def gate_version_problems(version, manifest_path):
+    """The gate integration the add-on installs carries the add-on's version, so the add-on can tell an older copy in
+    custom_components from its own (ADR-0042)."""
+    if not os.path.isfile(manifest_path):
+        return ["gate/marketplace_guard_gate/manifest.json missing"]
+    try:  # parsing is the only way to know whether the file is valid JSON
+        manifest = json.loads(_read(manifest_path))
+    except ValueError:
+        return ["gate manifest.json: not valid JSON"]
+    if manifest.get("version") != version:
+        return [f"gate manifest.json has version {manifest.get('version')!r}, config.yaml {version!r}: set both"]
+    return []
+
+
 def check_addon_config(root):
     if importlib.util.find_spec("yaml") is None:
         return Result("addon-config", "not-run", "PyYAML is not installed", [
@@ -310,6 +325,8 @@ def check_addon_config(root):
     translations = {label[len("translations/"):-len(".yaml")]: data
                     for label, data in parsed.items() if label.startswith("translations/")}
     problems = addon_config_problems(parsed["config.yaml"], translations, defaults)
+    problems += gate_version_problems(parsed["config.yaml"].get("version"),
+                                      os.path.join(addon, "gate", "marketplace_guard_gate", "manifest.json"))
     if problems:
         return Result("addon-config", "fail", f"{len(problems)} problem(s)", problems)
     schema = parsed["config.yaml"]["schema"]

@@ -20,6 +20,7 @@ RUN apt-get update \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY scanner.py guard.py /opt/marketplace_guard/
+COPY gate /opt/marketplace_guard/gate
 COPY run.sh /
 RUN chmod a+x /run.sh
 

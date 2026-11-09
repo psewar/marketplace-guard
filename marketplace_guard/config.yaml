@@ -1,5 +1,5 @@
 name: "Marketplace Guard"
-version: "2.3.0"
+version: "2.4.0"
 slug: "marketplace_guard"
 description: "Security scanning for custom components from Home Assistant's Marketplace, HACS or by hand: automatic quarantine of newly installed components, on-demand repository pre-checks, and an optional AI second opinion. Formerly HACS Guard."
 url: "https://github.com/psewar/marketplace-guard"
@@ -50,6 +50,7 @@ options:
   ai_timeout: 120
   quarantine_updates: true
   restart_after_quarantine: false
+  marketplace_gate: false
 schema:
   watch_paths:
     - "list(/homeassistant/custom_components|/homeassistant/www/community)"
@@ -81,3 +82,4 @@ schema:
   ai_timeout: int
   quarantine_updates: bool
   restart_after_quarantine: bool
+  marketplace_gate: bool

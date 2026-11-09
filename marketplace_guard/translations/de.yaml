@@ -129,3 +129,13 @@ configuration:
       Läuft eine quarantänierte neue Integration schon in Home Assistant (der Marketplace richtet sie
       ohne Neustart ein), Home Assistant sofort neu starten, damit sie stoppt. Aus: die Benachrichtigung
       bittet dich um den Neustart.
+  marketplace_gate:
+    name: Marketplace-Installationen vor dem Laden prüfen
+    description: >-
+      Standardmäßig aus. Installiert die kleine Integration „Marketplace Guard Gate“: der Marketplace
+      fragt dann Marketplace Guard, bevor eine Integration oder Dashboard-Karte, die er geschrieben hat,
+      geladen werden kann, und stellt den vorherigen Stand wieder her, wenn sie quarantäniert würde; ihr
+      Code läuft so nie. Nach dem Einschalten Home Assistant neu starten und die Integration hinzufügen
+      (die Benachrichtigung enthält den Link). Sie hängt sich in den Marketplace ein, den ein
+      Home-Assistant-Update ändern kann; das Attribut „marketplace_gate“ des Status-Sensors sagt, ob sie
+      wirkt.

@@ -11,6 +11,10 @@ Inside the add-on:
 
 - `guard.py` is the daemon (watcher, quarantine, repository pre-check, AI review, notifications, status sensor).
 - `scanner.py` is the static scan (bandit, pip-audit, heuristics, HACS critical list).
+- `gate/marketplace_guard_gate/` is the optional integration that runs inside Home Assistant and asks the add-on before
+  Marketplace content can load
+  ([ADR-0042](docs/adr/0042-an-optional-gate-checks-marketplace-installs-before-they-load.md)); its logic is in
+  `gatecore.py`, without Home Assistant imports, so it is tested like the rest.
 - `tests/` holds the unit tests; `tests/fixtures/` holds sample components for manual scans
   (`python3 guard.py scan-path tests/fixtures/evil`).
 
@@ -40,7 +44,8 @@ A pull request is complete when it contains, as far as they apply:
   fix. The scanner handles hostile input: a refusal is tested as well as the accepted case. Tests use the standard
   library only, so they run without Home Assistant.
 - **Version.** `version` in `marketplace_guard/config.yaml`. The Supervisor offers an update only when it changes, so every
-  change to the add-on's files raises it: patch for fixes and calibration, minor for new behaviour or options.
+  change to the add-on's files raises it: patch for fixes and calibration, minor for new behaviour or options. The gate's
+  `manifest.json` carries the same version (`tools/check.py` checks it).
 - **Changelog.** An entry in `marketplace_guard/CHANGELOG.md` under the new version.
 - **Dependencies.** A scanner version is changed in `marketplace_guard/requirements.in`; then `marketplace_guard/requirements.txt`
   is regenerated with its hashes
