@@ -168,8 +168,13 @@ PY_HIGH = [
     ("shell-exec",
      re.compile(r"os\.system\s*\(|subprocess\.[A-Za-z_]+\([^)]{0,500}shell\s*=\s*True|(^|[^.\w])Popen\s*\(|pty\.spawn|os\.popen\s*\("),
      "Shell / process execution"),
+    # os.chmod counts only with a fixed mode that grants execution (0o755, 0o700, 0o4755), the step that makes a
+    # downloaded file runnable; a mode derived from an existing file (st_mode & 0o7777) only keeps permissions
+    # (ADR-0043).
     ("runtime-fetch-exec",
-     re.compile(r"urllib\.request\.urlretrieve|(^|[^\w])(wget|curl)\s+http|pip\s+install\s|os\.chmod\([^)]{0,500}0o?[75]|subprocess[^\n]{0,500}(curl|wget)"),
+     re.compile(r"urllib\.request\.urlretrieve|(^|[^\w])(wget|curl)\s+http|pip\s+install\s"
+                r"|os\.chmod\((?:[^()\n]|\([^()\n]{0,500}\)){0,500}?,\s*(?:mode\s*=\s*)?0o?[0-7]{0,3}[1357][0-7]{0,3}\s*\)"
+                r"|subprocess[^\n]{0,500}(curl|wget)"),
      "Downloads or installs additional code at runtime"),
 ]
 PY_MEDIUM = [

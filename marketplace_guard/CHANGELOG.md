@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.2
+- **Fewer false alarms for `runtime-fetch-exec`:** `os.chmod` counts only with a fixed mode that grants execution
+  (such as `0o755`). Code that replaces a file and keeps its permissions (`st_mode & 0o7777`) is no longer rated
+  `high`, so the gate no longer refuses such an update. A fixed executable mode is found in more forms than before
+  (a first argument with parentheses, a mode with special bits such as `0o4755`) (ADR-0043).
+
 ## 2.4.1
 - **Status sensor:** until the gate is active, Marketplace Guard asks Home Assistant every minute instead of every 15
   minutes, so `marketplace_gate` says `active` within a minute after you add the integration.

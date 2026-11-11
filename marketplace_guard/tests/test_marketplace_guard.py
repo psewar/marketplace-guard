@@ -1803,6 +1803,33 @@ class TestEvasion(unittest.TestCase):
         self.assertEqual(scanner.python_source(b"X = 1\n")[1:], ("utf-8", None))
 
 
+class TestRuntimeFetchExec(unittest.TestCase):
+    """os.chmod is a runtime-fetch-exec finding only with a fixed mode that grants execution (ADR-0043)."""
+
+    @staticmethod
+    def high(line):
+        found = scanner.scan_text(f"import os\n{line}\n", "x.py", "py", scanner.PY_HIGH, scanner.PY_MEDIUM)
+        return ("high", "runtime-fetch-exec") in {(f["severity"], f["code"]) for f in found}
+
+    def test_a_fixed_executable_mode_is_refused(self):
+        for line in ("os.chmod(path, 0o755)", "os.chmod(path, 0755)", "os.chmod(p,0o700)", "os.chmod(b, 0o555)",
+                     "os.chmod(os.path.join(d, 'x'), 0o755)", "os.chmod(path, mode=0o711)",
+                     "os.chmod(p, 0o4755)", "x = 1; os.chmod(f.name, 0o775)"):
+            self.assertTrue(self.high(line), line)
+
+    def test_keeping_the_permissions_of_a_replaced_file_is_not(self):
+        for line in ("os.chmod(temp_name, original.st_mode & 0o7777)",
+                     "os.chmod(tmp, os.stat(src).st_mode & 0o777)", "os.chmod(path, 0o7777 & mode)",
+                     "os.chmod(p, stat.S_IMODE(st.st_mode))", "os.chmod(path, 0o644)", "os.chmod(path, 0o600)"):
+            self.assertFalse(self.high(line), line)
+
+    def test_a_long_line_stays_fast(self):
+        start = time.monotonic()
+        self.high("os.chmod(" + "(a" * 20000 + ", 0o644)")
+        self.high("os.chmod(" + "a," * 20000 + " st_mode & 0o7777)")
+        self.assertLess(time.monotonic() - start, 2.0)
+
+
 class TestDocstrings(unittest.TestCase):
     """Docstrings are text, not code, unless the component reads them (ADR-0035). compile() only parses."""
 
