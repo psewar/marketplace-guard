@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-11
 decision-makers: maintainer
 ---
@@ -41,7 +41,7 @@ the search at the first `)`, and a mode with a leading special bit (`0o4755`) di
 
 ## Decision Outcome
 
-Proposed: the second option.
+Chosen option: the second option.
 
 * The `os.chmod` part of `runtime-fetch-exec` matches a call whose last argument is a literal mode with an execute bit:
   `0o755`, `0755`, `0o700`, `0o555`, `0o711`, `0o4755`, `mode=0o711`. The first argument may contain one level of
@@ -71,3 +71,5 @@ that component. The third loses the one part that sees a downloaded binary being
 nested first argument and special bits, are found; masks and modes derived from an existing file are not; a long
 line stays fast. Without the change the cases that keep permissions fail. The evil fixture
 (`python3 guard.py scan-path tests/fixtures/evil`) keeps both of its `runtime-fetch-exec` findings.
+
+Accepted by the maintainer on 2026-11-12; implemented in pull request #49.

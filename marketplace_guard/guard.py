@@ -1741,7 +1741,7 @@ def install_gate(opts, state):
     """Put the gate integration into custom_components when the option asks for it, and accept that copy as installed
     (ADR-0042). Returns the outcome as a fact: "off" | "no-source" | "no-marketplace" | "unchanged" | "installed" (first
     copy: the notification says to add the integration) | "updated" (replaced an earlier copy: Home Assistant loads it
-    at its next restart, the earlier one keeps checking until then)."""
+    at its next restart, the earlier one keeps checking until then and marks that restart as required, ADR-0044)."""
     if not opts.get("marketplace_gate"):
         return "off"
     src = gate_source()
@@ -1772,7 +1772,8 @@ def install_gate(opts, state):
         state[dest] = {"hash": dir_hash(dest), "hv": HASH_VERSION, "verdict": "clean", "ts": now_iso(), "gate": True}
         save_state(state)
     if outcome == "updated":
-        log(f"marketplace gate: updated in {dest}; Home Assistant loads it at its next restart")
+        log(f"marketplace gate: updated in {dest}; Home Assistant loads it at its next restart (a running gate of "
+            "2.5.0 or later marks that restart as required within a minute)")
     if outcome == "installed":
         log(f"marketplace gate: installed into {dest}")
         notify(opts["notify_services"], "Marketplace Guard: gate installed",

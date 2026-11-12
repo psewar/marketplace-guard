@@ -5,7 +5,12 @@ The Marketplace writes a repository's content, runs the check of its repository 
 (`async_check_written_content`), and only then loads anything: when the check raises, it puts back what was there.
 The gate wraps that check: after the Marketplace's own, it asks the Marketplace Guard app for a verdict through two
 folders in Home Assistant's configuration folder and refuses what the app would quarantine.
+
+The app replaces the gate's own folder when it brings a new version; Home Assistant runs the new code only after a
+restart. CopyWatch notices that, so that Home Assistant's restart flag gets set (ADR-0044).
 """
+import importlib
+import importlib.util
 import inspect
 import json
 import os
@@ -17,6 +22,11 @@ CATEGORIES = ("integration", "plugin")  # what Marketplace Guard scans: code tha
 METHOD = "async_check_written_content"
 MAX_ANSWER = 64 * 1024
 MARK = "_marketplace_guard_gate"
+MANIFEST = "manifest.json"
+MAX_MANIFEST = 16 * 1024
+COPY_CHECK_SECONDS = 60
+# Home Assistant's latched "restart required" flag (since 2026.11.0, the first version with the Marketplace)
+RESTART_FLAG = ("homeassistant.helpers.system_state", "async_set_home_assistant_restart_required")
 
 
 def wrap_check_methods(root, make_wrapper):
@@ -109,3 +119,65 @@ def outcome(answer, on_no_answer):
     verdict = str(answer.get("verdict") or "?").upper()
     return "refuse", (f"Marketplace Guard refused it before it could load ({verdict}): "
                       f"{answer.get('summary') or 'see its report'}")
+
+
+def find_function(module, name):
+    """module.name when this Python has that module and it has such a function, else None (another Home Assistant
+    version). Checks each package level with find_spec before importing anything."""
+    parts = module.split(".")
+    for depth in range(1, len(parts) + 1):
+        if importlib.util.find_spec(".".join(parts[:depth])) is None:
+            return None
+    function = getattr(importlib.import_module(module), name, None)
+    return function if callable(function) else None
+
+
+def manifest_version(folder):
+    """The version in folder/manifest.json as a fact: a non-empty string, or None when there is none to read (missing,
+    not JSON, no version)."""
+    path = os.path.join(folder, MANIFEST)
+    if not os.path.isfile(path):
+        return None
+    try:  # the app replaces the folder as a whole: the file can go between the check above and the read
+        with open(path, encoding="utf-8") as f:
+            text = f.read(MAX_MANIFEST)
+    except OSError:
+        return None
+    try:  # only parsing tells whether it is valid JSON
+        manifest = json.loads(text)
+    except ValueError:
+        return None
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    return version if isinstance(version, str) and version else None
+
+
+class CopyWatch:
+    """Whether the gate's folder still holds the code that runs (ADR-0044). running is the version read while Python
+    imported the gate. Another version on disk (newer, or older after a rollback) runs only after a restart: the first
+    time judge() sees one, it calls mark_restart(version on disk), once, since Home Assistant's flag latches until the
+    restart."""
+
+    def __init__(self, folder, running, mark_restart):
+        self.folder = folder
+        self.running = running
+        self.mark_restart = mark_restart
+        self.state = None  # not judged yet
+
+    def read(self):
+        """The version on disk now. File I/O: Home Assistant runs this in an executor."""
+        return manifest_version(self.folder)
+
+    def judge(self, on_disk):
+        """Take the version read from disk; returns the state as a fact: "current" (the code on disk runs) |
+        "replaced" (another version waits for a restart; latched) | "unknown" (a version could not be read, nothing is
+        concluded)."""
+        if self.state == "replaced":
+            return self.state
+        if self.running is None or on_disk is None:
+            self.state = "unknown"
+        elif on_disk == self.running:
+            self.state = "current"
+        else:
+            self.state = "replaced"
+            self.mark_restart(on_disk)
+        return self.state

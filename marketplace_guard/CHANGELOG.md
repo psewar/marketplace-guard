@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.0
+- **Gate updates ask for the restart they need:** when an update of the app brings a new version of the gate, the gate
+  that runs notices it within a minute and tells Home Assistant that a restart is required (with
+  `marketplace_guard_gate` as the reason). Home Assistant shows it, and an automation can use the trigger or condition
+  *Restart required* (`homeassistant.restart_required`) to restart at a time that suits you. Until then, the version
+  before keeps checking. This works from the next gate update on: the gate before 2.5.0 does not notice its
+  replacement, so restart Home Assistant once after this update. In a Home Assistant without the restart flag, a
+  notification says it instead (ADR-0044).
+
 ## 2.4.2
 - **Fewer false alarms for `runtime-fetch-exec`:** `os.chmod` counts only with a fixed mode that grants execution
   (such as `0o755`). Code that replaces a file and keeps its permissions (`st_mode & 0o7777`) is no longer rated

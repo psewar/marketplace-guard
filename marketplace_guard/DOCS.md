@@ -68,7 +68,10 @@ The gate closes the gap above: before anything the Marketplace wrote can load, i
 3. The status sensor's `marketplace_gate` attribute says `active` within a minute.
 
 An update of Marketplace Guard brings the gate's new version along; Home Assistant loads it at its next restart, and the
-version before keeps checking until then.
+version before keeps checking until then. The gate that runs notices its new version within a minute and tells Home
+Assistant that a restart is required, naming `marketplace_guard_gate`: Home Assistant shows it, and an automation can
+restart at a time that suits you with the trigger or condition *Restart required* (`homeassistant.restart_required`).
+A gate older than 2.5.0 does not do this yet; restart once after updating to 2.5.0.
 
 From then on, what Marketplace Guard would quarantine is not installed: the Marketplace puts back what was there (the
 version before, for an update), its install dialog says why, and a notification names the component. Its code never
@@ -377,7 +380,10 @@ Marketplace Guard.
 3. Das Attribut `marketplace_gate` des Status-Sensors zeigt innerhalb einer Minute `active`.
 
 Ein Update von Marketplace Guard bringt die neue Version der Gate mit; Home Assistant lädt sie beim nächsten Neustart,
-bis dahin prüft die Version davor weiter.
+bis dahin prüft die Version davor weiter. Die laufende Gate bemerkt ihre neue Version innerhalb einer Minute und meldet
+Home Assistant, dass ein Neustart nötig ist, mit `marketplace_guard_gate` als Grund: Home Assistant zeigt das an, und
+eine Automation kann mit dem Auslöser oder der Bedingung *Neustart erforderlich* (`homeassistant.restart_required`) zu
+einer passenden Zeit neu starten. Eine Gate vor 2.5.0 kann das noch nicht; starte nach dem Update auf 2.5.0 einmal neu.
 
 Ab dann wird nicht installiert, was Marketplace Guard quarantänieren würde: der Marketplace stellt den vorherigen Stand
 wieder her (bei einem Update die Version davor), sein Installationsdialog nennt den Grund, und eine Benachrichtigung
