@@ -190,6 +190,17 @@ class TestGateRepository(unittest.TestCase):
             (lambda m: m.update(documentation="http://example.org"), "documentation is not an https URL"),
             (lambda m: m.update(codeowners="@someone"), "codeowners is not a list"),
             (lambda m: m.update(aaa_first=True), "order hassfest asks for"),
+            (lambda m: m.pop("categories"), "has no categories"),
+            (lambda m: m.update(categories=[]), "not a list of one to three names"),
+            (lambda m: m.update(categories="security_safety"), "not a list of one to three names"),
+            (lambda m: m.update(categories=["sensors", "water", "pets", "finance"]), "not a list of one to three"),
+            (lambda m: m.update(categories=["security_safety", "security_safety"]), "names one twice"),
+            (lambda m: m.update(categories=["security"]), "category security is not a Marketplace category"),
+            (lambda m: m.update(categories=["security_safety.malware"]), "security_safety.malware is not a"),
+            (lambda m: m.update(categories=["finance.stocks"]), "finance.stocks is not a"),
+            (lambda m: m.update(categories=["security_safety.cameras.extra"]), "is not a Marketplace category"),
+            (lambda m: m.update(categories=["security_safety", "security_safety.cameras"]),
+             "security_safety next to its own subcategory"),
         )
         original = check._read(self.path(manifest))
         for change, expected in cases:
@@ -198,6 +209,13 @@ class TestGateRepository(unittest.TestCase):
                     f.write(original)
                 self.edit_json(manifest, change)
                 self.assertIn(expected, self.problems())
+
+    def test_categories_the_marketplace_knows_pass(self):
+        for categories in (["security_safety"], ["security_safety", "computers_network.monitoring"],
+                           ["computers_network.monitoring", "computers_network.nas_servers", "sensors"]):
+            with self.subTest(categories=categories):
+                self.assertEqual(check.category_problems(categories), [])
+        self.assertTrue(all(isinstance(subs, tuple) for subs in check.MARKETPLACE_CATEGORIES.values()))
 
     def test_the_icon_must_be_a_256_pixel_png(self):
         icon = self.path(f"{check.GATE}/brand/icon.png")

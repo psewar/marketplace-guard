@@ -31,6 +31,11 @@ pinned announcement hacs/integration#5590 and the pull request template of hacs/
   `brand/icon.png` (256 × 256) in its own folder. The manifest documentation says not to list `homeassistant` or
   `persistent_notification` in `dependencies`, which Home Assistant sets up itself; hassfest accepted them in a local
   run on 2026-11-20, so that is a rule of the documentation, not of the tool.
+* The manifest's `categories` (contributors.home-assistant.io/core/integrations/categories, read on 2026-11-20) are
+  optional for a custom integration, but the Marketplace catalog takes them into its data. One to three names from a
+  fixed list, a category or `category.subcategory`; the HACS action warns without them and fails on an unknown one.
+  None of them is about software: `security_safety` is described with cameras, locks and alarm systems,
+  `computers_network.monitoring` with uptime monitoring.
 * Not accepted: integrations that override or test a core integration. Removed: what breaks Home Assistant.
 
 The public repository of Marketplace Guard is an app repository (`repository.yaml`, `marketplace_guard/config.yaml`),
@@ -75,9 +80,12 @@ Chosen option: publish the gate as its own repository (the last option), and sub
   version (ADR-0042), so each release publishes both.
 * The gate's manifest gets the keys the catalog needs. `documentation`, `issue_tracker` and `codeowners` name the
   publishing account, so they hold the placeholder `OWNER` here and `tools/publish.py` fills them in, in both published
-  copies. `persistent_notification` leaves `dependencies`. The icon is `brand/icon.png` in the gate's folder.
+  copies. `persistent_notification` leaves `dependencies`. The icon is `brand/icon.png` in the gate's folder. The
+  category is `security_safety` alone: people look for the gate as a safety measure, which is the categories page's
+  own test ("where would someone look for it?"), and it is not a monitoring tool for computers or networks.
 * `tools/check.py` checks what the catalog and hassfest check and can be checked here: the manifest's keys and their
-  order, the dependencies, the icon, `hacs.json`, and the files the gate repository is built from.
+  order, the dependencies, the category against the list of the categories page, the icon, `hacs.json`, and the files
+  the gate repository is built from.
 * The app reports itself to the gate as a fact: at its start and at every heartbeat it writes
   `marketplace_guard/gate/app.json` in Home Assistant's configuration folder (its version, the request protocol `1`,
   its heartbeat, the time). The gate's setup reads it first and stops with the next step when the app never reported
@@ -114,6 +122,8 @@ each catalog rule a changed file breaks. `marketplace_guard/tests/test_gate.py`:
 gate the Marketplace's records name is never replaced; the sensor asks for a gate folder without the option. hassfest
 passes on the built gate repository (locally with its container image on 2026-11-20: one integration, none invalid;
 the same run refuses a broken `iot_class`), then in the gate repository's workflow, and the HACS action passes there
-before the submission.
+before the submission. The first release, 2.6.0, passed both there with one warning, the missing category, which
+2.6.1 adds. The table of categories in `tools/check.py` equals Home Assistant's own list in the hassfest image of
+2026-11-20, and hassfest warns there about an unknown category, but not about `security_safety`.
 
 Proposed on 2026-11-20.

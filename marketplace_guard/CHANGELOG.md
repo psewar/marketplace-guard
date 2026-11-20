@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.1
+- **Gate:** its manifest names its Marketplace category, `security_safety`, so the Marketplace lists it there
+  (ADR-0045). Nothing else changes; Home Assistant loads the new version of the gate at its next
+  restart.
+
 ## 2.6.0
 - **The gate from the Marketplace:** *Marketplace Guard Gate* is published as its own repository, so it can be
   installed from Home Assistant's Marketplace. The Marketplace does not take repositories with apps, so the app itself

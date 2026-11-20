@@ -81,7 +81,7 @@ that the numbers have no gaps; that every relative link in `AGENTS.md`, `README.
 `marketplace_guard/*.md` and `docs/adr/*.md` resolves and every repository path named here exists; and that options, schema,
 both translations and `DEFAULTS` in `guard.py` agree (see "What a change brings along"); and that the gate repository
 `tools/publish.py` makes meets what the Marketplace catalog, the HACS action and hassfest check (manifest keys and
-their order, icon, `hacs.json`, README markers, workflow). With `--all` it also runs the
+their order, the Marketplace category, icon, `hacs.json`, README markers, workflow). With `--all` it also runs the
 unit tests of the add-on and of the tools, and `tools/check_neutral.py`. Exit 0: everything ran and passed; 1: a check
 found problems; 2: a check could not run, for example the configuration check without PyYAML, and the output says
 the next step. Commit messages and pull request texts are not in the repository; check them with `--text`.

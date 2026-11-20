@@ -347,6 +347,60 @@ SET_UP_BY_HOME_ASSISTANT = ("homeassistant", "persistent_notification")
 GATE_MARKERS = ("<!-- publish: install -->", "<!-- publish: marketplace -->")  # tools/publish.py fills them
 GATE_WORKFLOW_NEEDS = ("hacs/action@", "category: integration", "home-assistant/actions/hassfest@")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# The Marketplace's integration categories and their subcategories, from contributors.home-assistant.io/core/
+# integrations/categories (read on 2026-11-20); the same 92 names as `integration_category` in Home Assistant's
+# homeassistant/components/homeassistant/strings.json, which hassfest checks against. Optional for a custom
+# integration, but the Marketplace lists it under them, the HACS action warns without and fails on an unknown one.
+# When that list changes, this table follows it.
+MARKETPLACE_CATEGORIES = {
+    "ai_voice": ("ai_models", "image_recognition", "speech", "voice_assistants"),
+    "appliances_cleaning": ("cleaning", "cooking", "laundry"),
+    "blinds_curtains": (),
+    "buttons_remotes": (),
+    "climate": ("air_purifiers_humidifiers", "fans_ventilation", "heat_pumps_air_conditioning", "thermostats_heating",
+                "water_heaters"),
+    "computers_network": ("cloud_developer_tools", "monitoring", "nas_servers", "printers", "routers_network"),
+    "diy_makers": ("boards_hardware", "web_data_connectors"),
+    "energy": ("backup_power", "energy_prices", "ev_charging", "meters_monitoring", "solar_batteries"),
+    "finance": (),
+    "garden_plants": (),
+    "health_wellbeing": (),
+    "helpers": ("calculate_value", "store_value"),
+    "hubs_protocols": ("building_automation", "smart_home_hubs", "wireless_protocols"),
+    "lighting": ("bulbs_lamps", "led_strips_controllers", "lighting_systems"),
+    "local_services": (),
+    "media_entertainment": ("gaming", "music_radio_services", "speakers_audio", "tv_streaming"),
+    "messaging_notifications": ("chat_apps", "email_sms_calls", "push_notifications"),
+    "news_social_media": (),
+    "other_ecosystems": (),
+    "pets": (),
+    "plugs_switches": (),
+    "presence_location": ("network_presence", "phones_companion_apps", "trackers"),
+    "productivity_information": ("calendars_todos", "documents_photos", "shopping_groceries"),
+    "security_safety": ("alarm_systems", "cameras", "doorbells_intercoms", "locks_access", "smoke_co_alarms"),
+    "sensors": ("air_quality", "door_window", "motion_presence", "temperature_humidity"),
+    "vehicles_transport": ("bikes_scooters", "cars_evs", "flights", "public_transport"),
+    "water": ("meters_leak_detection", "pools_spas", "water_treatment"),
+    "weather_alerts": ("air_quality_pollen", "forecasts", "public_warnings"),
+}
+
+
+def category_problems(categories):
+    """What hassfest and the HACS action would say about a manifest's `categories` (pure): one to three distinct
+    names, each a category or `category.subcategory` from the table, never a category next to its own subcategory."""
+    if not (isinstance(categories, list) and 1 <= len(categories) <= 3 and all(isinstance(c, str) for c in categories)):
+        return ["gate manifest.json: categories is not a list of one to three names"]
+    problems = []
+    if len(set(categories)) != len(categories):
+        problems.append("gate manifest.json: categories names one twice")
+    for name in categories:
+        group, _, sub = name.partition(".")
+        if group not in MARKETPLACE_CATEGORIES or (sub and sub not in MARKETPLACE_CATEGORIES[group]):
+            problems.append(f"gate manifest.json: category {name} is not a Marketplace category (the HACS action "
+                            "fails on it)")
+        elif sub and group in categories:
+            problems.append(f"gate manifest.json: category {group} next to its own subcategory {name}")
+    return problems
 
 
 def _json_object(path):
@@ -399,6 +453,11 @@ def gate_repository_problems(root):
                 problems.append(f"gate manifest.json: {key} is not an https URL")
         if "codeowners" in manifest and not isinstance(manifest["codeowners"], list):
             problems.append("gate manifest.json: codeowners is not a list")
+        if "categories" not in manifest:
+            problems.append("gate manifest.json has no categories: the Marketplace lists the gate under none, and the "
+                            "HACS action warns")
+        else:
+            problems += category_problems(manifest["categories"])
     size = png_size(os.path.join(gate, "brand", "icon.png"))
     if size != (256, 256):
         found = "missing or not a PNG" if size is None else f"{size[0]}x{size[1]}"
@@ -437,7 +496,8 @@ def check_gate_repository(root):
     problems = gate_repository_problems(root)
     if problems:
         return Result("gate-repo", "fail", f"{len(problems)} problem(s)", problems)
-    return Result("gate-repo", "ok", "manifest, icon, hacs.json, README markers and workflow as the catalog asks", [])
+    return Result("gate-repo", "ok", "manifest, category, icon, hacs.json, README markers and workflow as the catalog "
+                                     "asks", [])
 
 
 # ---------------------------------------------------------------- unit tests and the site-neutral check
