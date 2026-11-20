@@ -1605,6 +1605,7 @@ class Worker:
 
     def startup(self, core_ready):
         log("Home Assistant core API ready" if core_ready else "core API not ready after wait - continuing anyway")
+        write_app_report(self.opts, self.status_secs)  # whichever way the gate came, it may be set up now (ADR-0045)
         try:
             gate = install_gate(self.opts, self.state)
         except OSError as e:  # file system fault while copying: reported, the guard runs on
@@ -1683,13 +1684,14 @@ class Worker:
             update_status(self.opts, self.state)
         if now - self.last_status >= self.status_secs:
             self.last_status = self.last_gate_check = now
+            write_app_report(self.opts, self.status_secs)  # the gate is set up only while this is fresh (ADR-0045)
             refresh_environment(self.opts)  # picks up AI Task entities or notify services added since the start
             try:
                 retry_ai_reviews(self.opts, self.state, between=self.process_ready)
             except Exception as e:  # like a failed scan: one component must not stop the daemon
                 log(f"AI review retry failed: {e}")
             update_status(self.opts, self.state)
-        elif (self.opts.get("marketplace_gate") and _ENV.get("gate") != "active"
+        elif (gate_wanted(self.opts) and _ENV.get("gate") != "active"
               and now - self.last_gate_check >= GATE_PENDING_CHECK_SECONDS):
             # the operator is about to add the gate: the sensor says "active" within a minute, not at the heartbeat
             self.last_gate_check = now
@@ -1703,6 +1705,8 @@ GATE_MAX_REQUEST = 4096
 GATE_ANSWER_KEEP_SECONDS = 600
 GATE_PENDING_CHECK_SECONDS = 60  # until the gate is active, Home Assistant is asked this often instead of per heartbeat
 GATE_ADD_LINK = f"https://my.home-assistant.io/redirect/config_flow_start/?domain={GATE_DOMAIN}"
+GATE_PROTOCOL = 1  # the request and answer format answer_gate() speaks; the gate checks it before it is set up
+APP_REPORT = "app.json"  # the app's report of itself, which the gate reads before it is set up (ADR-0045)
 
 
 def config_dir(opts):
@@ -1737,18 +1741,66 @@ def _gate_files(root):
     return files
 
 
+def app_version():
+    """This app's version as a fact: the gate it ships carries it (tools/check.py checks that), or None without one."""
+    src = gate_source()
+    path = os.path.join(src, "manifest.json") if src else None
+    if not path or not os.path.isfile(path):
+        return None
+    try:  # part of this app, still read like any file: only parsing tells whether it is valid JSON
+        with open(path, encoding="utf-8") as f:
+            manifest = json.loads(f.read(16 * 1024))
+    except (OSError, ValueError):
+        return None
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def write_app_report(opts, heartbeat_seconds, now=None):
+    """Tell the gate that this app answers here (ADR-0045): its version, the protocol it speaks, how often it reports
+    and when it last did, in marketplace_guard/gate/app.json (written whole, then renamed: the gate never reads half of
+    it). The gate is set up only while the report is fresh. Returns whether it was written."""
+    d = os.path.join(config_dir(opts), "marketplace_guard", "gate")
+    report = {"app": "marketplace_guard", "version": app_version(), "protocol": GATE_PROTOCOL,
+              "heartbeat_seconds": int(heartbeat_seconds), "ts": round(time.time() if now is None else now)}
+    tmp = os.path.join(d, f".{APP_REPORT}.tmp")
+    try:  # file system fault: the gate's setup then says the app did not report itself, the guard runs on
+        os.makedirs(d, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(report, f)
+        os.replace(tmp, os.path.join(d, APP_REPORT))
+    except OSError as e:
+        log(f"marketplace gate: the report for the gate could not be written: {e}")
+        return False
+    return True
+
+
+def gate_folder(opts):
+    return os.path.join(config_dir(opts), "custom_components", GATE_DOMAIN)
+
+
+def gate_from_marketplace(opts):
+    """The repository the Marketplace installed the gate from, from its own records, or None (ADR-0045)."""
+    return scanner.installed_repositories(opts["ha_storage"])["integration"].get(GATE_DOMAIN)
+
+
 def install_gate(opts, state):
     """Put the gate integration into custom_components when the option asks for it, and accept that copy as installed
-    (ADR-0042). Returns the outcome as a fact: "off" | "no-source" | "no-marketplace" | "unchanged" | "installed" (first
-    copy: the notification says to add the integration) | "updated" (replaced an earlier copy: Home Assistant loads it
-    at its next restart, the earlier one keeps checking until then and marks that restart as required, ADR-0044)."""
+    (ADR-0042). Returns the outcome as a fact: "off" | "marketplace" (the Marketplace installed the gate and keeps it
+    current: not touched, ADR-0045) | "no-source" | "no-marketplace" | "unchanged" | "installed" (first copy: the
+    notification says to add the integration) | "updated" (replaced an earlier copy: Home Assistant loads it at its
+    next restart, the earlier one keeps checking until then and marks that restart as required, ADR-0044)."""
     if not opts.get("marketplace_gate"):
         return "off"
+    repository = gate_from_marketplace(opts)
+    if repository:
+        log(f"marketplace gate: installed through the Marketplace from {repository} - the Marketplace keeps it current")
+        return "marketplace"
     src = gate_source()
     if not src:
         log("marketplace gate: the gate integration is not in this image")
         return "no-source"
-    dest = os.path.join(config_dir(opts), "custom_components", GATE_DOMAIN)
+    dest = gate_folder(opts)
     if os.path.islink(dest):
         log(f"marketplace gate: {dest} is a link - not touched")
         return "no-source"
@@ -1782,10 +1834,16 @@ def install_gate(opts, state):
     return outcome
 
 
+def gate_wanted(opts):
+    """Whether there is a gate to ask Home Assistant about: the option asks for it, or its folder is there (the
+    Marketplace installed it, ADR-0045)."""
+    return bool(opts.get("marketplace_gate")) or os.path.isdir(gate_folder(opts))
+
+
 def gate_state(opts):
     """Whether the gate checks Marketplace installs, as a fact: "off" | "active" | "not set up" (installed, but Home
     Assistant has not loaded it: restart, then add the integration) | "unknown" (Home Assistant could not be asked)."""
-    if not opts.get("marketplace_gate"):
+    if not gate_wanted(opts):
         return "off"
     loaded = loaded_in_home_assistant(GATE_DOMAIN)
     return {True: "active", False: "not set up", None: "unknown"}[loaded]

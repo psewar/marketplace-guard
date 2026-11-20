@@ -66,3 +66,4 @@ Format: [MADR 4.0](https://adr.github.io/madr/), in English.
 | [0042](0042-an-optional-gate-checks-marketplace-installs-before-they-load.md) | An optional gate checks Marketplace installs before they load | accepted | 2026-11-09 |
 | [0043](0043-a-permission-change-counts-only-with-a-fixed-executable-mode.md) | A permission change counts only with a fixed executable mode | accepted | 2026-11-11 |
 | [0044](0044-the-gate-marks-a-restart-as-required-when-its-copy-is-replaced.md) | The gate marks a restart as required when its copy is replaced | accepted | 2026-11-11 |
+| [0045](0045-the-gate-is-published-as-its-own-repository-for-the-marketplace-catalog.md) | The gate is published as its own repository for the Marketplace catalog | proposed | 2026-11-20 |

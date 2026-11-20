@@ -3,11 +3,15 @@
     "step": {
       "user": {
         "title": "Marketplace Guard Gate",
-        "description": "Bevor etwas, das der Marketplace installiert, geladen werden kann, fragt die Gate die App Marketplace Guard. Was die App quarantänieren würde, wird nicht installiert: der Marketplace stellt den vorherigen Stand wieder her, und der Installationsdialog nennt den Grund."
+        "description": "Marketplace Guard {version} antwortet in diesem Home Assistant. Bevor etwas, das der Marketplace installiert, geladen werden kann, fragt die Gate die App. Was die App quarantänieren würde, wird nicht installiert: der Marketplace stellt den vorherigen Stand wieder her, und der Installationsdialog nennt den Grund."
       }
     },
     "abort": {
-      "single_instance_allowed": "Die Gate ist bereits eingerichtet."
+      "single_instance_allowed": "Die Gate ist bereits eingerichtet.",
+      "app_missing": "Die App Marketplace Guard hat sich in diesem Home Assistant nicht gemeldet. Die Gate fragt die App bei jeder Installation und braucht sie deshalb: installiere die App Marketplace Guard (2.6.0 oder neuer, unter Einstellungen → Apps), starte sie und füge die Gate dann erneut hinzu.",
+      "app_unreadable": "Die Meldung der App Marketplace Guard ist nicht lesbar. Starte die App neu, sie schreibt sie dann neu, und füge die Gate dann erneut hinzu.",
+      "app_stale": "Die App Marketplace Guard ({version}) hat sich zuletzt vor {minutes} Minuten gemeldet, läuft also nicht. Starte sie und füge die Gate dann erneut hinzu.",
+      "app_incompatible": "Die App Marketplace Guard ({version}) spricht ein anderes Anfrageformat als diese Gate. Bringe App und Gate auf dieselbe Version und füge die Gate dann erneut hinzu."
     }
   },
   "options": {

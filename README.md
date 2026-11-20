@@ -18,6 +18,11 @@ By hand: Settings → Apps → **Install app** → ⋮ → **Repositories**, add
 **Marketplace Guard** from the list. The defaults work without changes: alerts appear as notifications in Home
 Assistant, and everything installed before the first start is recorded as trusted.
 
+Home Assistant's Marketplace does not take apps, so the app is added as above. Its optional gate, which stops risky
+Marketplace installs before their code runs, is an integration: install it from the Marketplace as **Marketplace Guard
+Gate** (repository `marketplace-guard-gate` of the same account), or let the app put it in place (see the
+documentation).
+
 ## Learn more
 
 - Getting started, everyday use and all options: [marketplace_guard/DOCS.md](marketplace_guard/DOCS.md) (English and

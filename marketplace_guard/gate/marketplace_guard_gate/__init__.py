@@ -1,5 +1,6 @@
 """Marketplace Guard Gate: asks the Marketplace Guard app about content the Marketplace wrote, before Home Assistant
-loads it (ADR-0042). Installed by the app when its option `marketplace_gate` is on."""
+loads it (ADR-0042). Installed from the Marketplace (ADR-0045), or by the app when its option `marketplace_gate` is
+on."""
 from __future__ import annotations
 
 import asyncio

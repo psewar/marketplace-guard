@@ -14,13 +14,16 @@ Inside the add-on:
 - `gate/marketplace_guard_gate/` is the optional integration that runs inside Home Assistant and asks the add-on before
   Marketplace content can load
   ([ADR-0042](docs/adr/0042-an-optional-gate-checks-marketplace-installs-before-they-load.md)); its logic is in
-  `gatecore.py`, without Home Assistant imports, so it is tested like the rest.
+  `gatecore.py`, without Home Assistant imports, so it is tested like the rest. It is also published as its own
+  repository for the Marketplace catalog, which refuses repositories with apps
+  ([ADR-0045](docs/adr/0045-the-gate-is-published-as-its-own-repository-for-the-marketplace-catalog.md)).
 - `tests/` holds the unit tests; `tests/fixtures/` holds sample components for manual scans
   (`python3 guard.py scan-path tests/fixtures/evil`).
 
 Outside the add-on: `tools/check.py` runs the repository checks (its own tests are `tools/test_check.py`),
 `tools/check_neutral.py` keeps the repository site-neutral (`tools/test_check_neutral.py`), `tools/publish.py` copies
-a release to the public repository (`tools/test_publish.py`), `docs/adr/` holds the decisions.
+a release to the public repositories (`tools/test_publish.py`), `gate_repository/` holds the gate repository's own
+files (`README.md`, `hacs.json`, the validation workflow), `docs/adr/` holds the decisions.
 
 ## Workflow
 
@@ -30,11 +33,15 @@ a release to the public repository (`tools/test_publish.py`), `docs/adr/` holds 
 - There is no CI yet. `python3 tools/check.py --all` is the gate: it must pass (exit 0) before you push.
 - Commit subjects say what changes, in English, and name the ADR where there is one.
 - The pull request description says what changes and why, names its ADRs and says how it was tested.
-- Development happens here. A merged release reaches the public repository only through `python3 tools/publish.py`,
-  run by the maintainer ([ADR-0013](docs/adr/0013-publish-as-a-new-repository-with-one-start-commit.md)); nothing is
-  pushed or merged there by hand. The publishing account's name is written into the published copy only; the line
-  `<!-- publish: install -->` in `README.md` becomes the install button there
-  ([ADR-0038](docs/adr/0038-the-published-readme-carries-a-one-click-install-button.md)), so keep it.
+- Development happens here. A merged release reaches the public repositories (the app's and the gate's) only through
+  `python3 tools/publish.py`, run by the maintainer
+  ([ADR-0013](docs/adr/0013-publish-as-a-new-repository-with-one-start-commit.md)); nothing is pushed or merged there
+  by hand. The publishing account's name is written into the published copies only; the line
+  `<!-- publish: install -->` in `README.md` and `gate_repository/README.md` becomes the app's install button there
+  ([ADR-0038](docs/adr/0038-the-published-readme-carries-a-one-click-install-button.md)), the line
+  `<!-- publish: marketplace -->` in `gate_repository/README.md` the gate's Marketplace button, and the placeholder
+  `OWNER` in the gate's `manifest.json` the account; so keep them. The submission to the Marketplace catalog is a pull
+  request the maintainer opens by hand (`PUBLISHING.md`), never a tool or a coding agent.
 
 ## What a change brings along
 
@@ -63,7 +70,7 @@ A pull request is complete when it contains, as far as they apply:
 
 ```bash
 python3 tools/check.py --all                              # every check below, one exit code: the gate
-python3 tools/check.py                                    # ADR index, Markdown links, add-on configuration only
+python3 tools/check.py                                    # ADR index, links, add-on configuration, gate repository
 cd marketplace_guard && python3 -m unittest discover -s tests   # unit tests, standard library only
 python3 tools/check_neutral.py                            # site-neutral check of every tracked file
 python3 tools/check_neutral.py --text <file>              # commit message or pull request text
@@ -72,7 +79,9 @@ python3 tools/check_neutral.py --text <file>              # commit message or pu
 `tools/check.py` checks that the ADR index in `docs/adr/README.md` lists every ADR with its title, status and date and
 that the numbers have no gaps; that every relative link in `AGENTS.md`, `README.md`, `PUBLISHING.md`,
 `marketplace_guard/*.md` and `docs/adr/*.md` resolves and every repository path named here exists; and that options, schema,
-both translations and `DEFAULTS` in `guard.py` agree (see "What a change brings along"). With `--all` it also runs the
+both translations and `DEFAULTS` in `guard.py` agree (see "What a change brings along"); and that the gate repository
+`tools/publish.py` makes meets what the Marketplace catalog, the HACS action and hassfest check (manifest keys and
+their order, icon, `hacs.json`, README markers, workflow). With `--all` it also runs the
 unit tests of the add-on and of the tools, and `tools/check_neutral.py`. Exit 0: everything ran and passed; 1: a check
 found problems; 2: a check could not run, for example the configuration check without PyYAML, and the output says
 the next step. Commit messages and pull request texts are not in the repository; check them with `--text`.

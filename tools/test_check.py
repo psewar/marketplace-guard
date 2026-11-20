@@ -1,5 +1,7 @@
 """Tests for tools/check.py (standard library only; run by `python3 tools/check.py --all`)."""
+import json
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -149,6 +151,79 @@ class TestGateVersion(unittest.TestCase):
                     with open(manifest, "w", encoding="utf-8") as f:
                         f.write(text)
                     self.assertEqual(len(check.gate_version_problems("2.4.0", manifest)), problems)
+
+
+class TestGateRepository(unittest.TestCase):
+    """What the Marketplace catalog would refuse in the gate repository is found here first (ADR-0045)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        for rel in (check.GATE, check.GATE_FILES):  # the repository's own files, which pass
+            shutil.copytree(os.path.join(check.ROOT, *rel.split("/")), os.path.join(self.root, *rel.split("/")))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def path(self, rel):
+        return os.path.join(self.root, *rel.split("/"))
+
+    def edit_json(self, rel, change):
+        with open(self.path(rel), encoding="utf-8") as f:
+            data = json.load(f)
+        change(data)
+        with open(self.path(rel), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def problems(self):
+        return "\n".join(check.gate_repository_problems(self.root))
+
+    def test_the_repository_as_it_is_passes(self):
+        self.assertEqual(check.gate_repository_problems(check.ROOT), [])
+        self.assertEqual(self.problems(), "")
+
+    def test_manifest_rules(self):
+        manifest = f"{check.GATE}/manifest.json"
+        cases = (
+            (lambda m: m.pop("issue_tracker"), "lacks issue_tracker"),
+            (lambda m: m.update(dependencies=["marketplace", "persistent_notification"]), "persistent_notification"),
+            (lambda m: m.update(documentation="http://example.org"), "documentation is not an https URL"),
+            (lambda m: m.update(codeowners="@someone"), "codeowners is not a list"),
+            (lambda m: m.update(aaa_first=True), "order hassfest asks for"),
+        )
+        original = check._read(self.path(manifest))
+        for change, expected in cases:
+            with self.subTest(expected=expected):
+                with open(self.path(manifest), "w", encoding="utf-8") as f:
+                    f.write(original)
+                self.edit_json(manifest, change)
+                self.assertIn(expected, self.problems())
+
+    def test_the_icon_must_be_a_256_pixel_png(self):
+        icon = self.path(f"{check.GATE}/brand/icon.png")
+        with open(icon, "rb") as f:
+            head = bytearray(f.read())
+        head[16:24] = (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        with open(icon, "wb") as f:
+            f.write(head)
+        self.assertIn("512x512", self.problems())
+        os.remove(icon)
+        self.assertIn("missing or not a PNG", self.problems())
+
+    def test_hacs_json_readme_and_workflow(self):
+        self.edit_json(f"{check.GATE_FILES}/hacs.json", lambda h: h.update(name="", homeassistant="soon"))
+        problems = self.problems()
+        self.assertIn("no name", problems)
+        self.assertIn("homeassistant is not a version", problems)
+        with open(self.path(f"{check.GATE_FILES}/README.md"), "w", encoding="utf-8") as f:
+            f.write("# Gate\n\n<!-- publish: install -->\n")
+        self.assertIn("no line `<!-- publish: marketplace -->`", self.problems())
+        workflow = self.path(f"{check.GATE_FILES}/.github/workflows/validate.yml")
+        with open(workflow, "a", encoding="utf-8") as f:
+            f.write("          ignore: brands\n")
+        self.assertIn("does not accept ignored checks", self.problems())
+        os.remove(workflow)
+        self.assertIn("validate.yml missing", self.problems())
 
 
 class TestOverallExit(unittest.TestCase):

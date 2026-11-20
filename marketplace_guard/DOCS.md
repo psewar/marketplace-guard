@@ -59,19 +59,31 @@ A component Marketplace Guard finds at a later start without having seen it befo
 stopped) counts as newly installed.
 
 #### Stop risky Marketplace installs before they load (optional)
-The gate closes the gap above: before anything the Marketplace wrote can load, it asks Marketplace Guard.
+The gate closes the gap above: before anything the Marketplace wrote can load, it asks Marketplace Guard. It is the
+small integration *Marketplace Guard Gate*. Get it in one of two ways, not both.
+
+**From the Marketplace:** Settings → Marketplace, find **Marketplace Guard Gate** and install it. Its repository is
+`marketplace-guard-gate`, next to this app's repository and from the same account; until the Marketplace's catalog
+lists it, the button in that repository's README opens it in your Marketplace, which offers to add it first. Its setup
+opens right after the install: it checks that this app answers in your Home Assistant and otherwise says what is
+missing (for example: start the app). The Marketplace updates it like any other integration; Marketplace Guard leaves
+it alone, also with the option below.
+
+**From this app:**
 
 1. Turn on **Check Marketplace installs before they load** on the **Configuration** tab, save and restart the app. It
-   puts the small integration *Marketplace Guard Gate* into `custom_components` and sends a notification with a link.
+   puts the gate into `custom_components` and sends a notification with a link.
 2. Restart Home Assistant, then add the integration **Marketplace Guard Gate** (the link in the notification, or
    Settings → Devices & services → Add integration).
-3. The status sensor's `marketplace_gate` attribute says `active` within a minute.
 
-An update of Marketplace Guard brings the gate's new version along; Home Assistant loads it at its next restart, and the
-version before keeps checking until then. The gate that runs notices its new version within a minute and tells Home
-Assistant that a restart is required, naming `marketplace_guard_gate`: Home Assistant shows it, and an automation can
-restart at a time that suits you with the trigger or condition *Restart required* (`homeassistant.restart_required`).
-A gate older than 2.5.0 does not do this yet; restart once after updating to 2.5.0.
+Either way, the status sensor's `marketplace_gate` attribute says `active` within a minute.
+
+Each release of Marketplace Guard brings a new version of the gate: from the Marketplace as an update of the gate,
+from this app with the app's update. Home Assistant loads it at its next restart, and the version before keeps
+checking until then. The gate that runs notices its new version within a minute and tells Home Assistant that a
+restart is required, naming `marketplace_guard_gate`: Home Assistant shows it, and an automation can restart at a time
+that suits you with the trigger or condition *Restart required* (`homeassistant.restart_required`). A gate older than
+2.5.0 does not do this yet; restart once after updating to 2.5.0.
 
 From then on, what Marketplace Guard would quarantine is not installed: the Marketplace puts back what was there (the
 version before, for an update), its install dialog says why, and a notification names the component. Its code never
@@ -84,8 +96,9 @@ wait (120 seconds).
 
 The gate hooks into an internal part of the Marketplace, which a Home Assistant update can change. Then the gate does
 not start, a notification says so, and `marketplace_gate` shows `not set up`; until Marketplace Guard is updated,
-pre-check repositories before you install them. To turn it off: delete the integration Marketplace Guard Gate, turn the
-option off, delete `custom_components/marketplace_guard_gate` and restart Home Assistant.
+pre-check repositories before you install them. To turn it off: delete the integration Marketplace Guard Gate; then
+remove the gate in the Marketplace, or, if this app installed it, turn the option off and delete
+`custom_components/marketplace_guard_gate`; restart Home Assistant.
 
 #### Check a repository before you install it
 **On the web page:** type `owner/repo` or the repository's GitHub URL into the field and select **Pre-check**.
@@ -205,7 +218,7 @@ The defaults work without changes. Every option is also described on the **Confi
 | Allowlist | empty | Components (folder name) or repositories (`owner/repo`) that are never quarantined. A repository counts only for components the Marketplace or HACS installed. |
 | Quarantine risky updates | on | Quarantines an update that brings a risk at the quarantine threshold the version before did not have. The integration is then missing after the next restart until you install a version you trust. Off: such an update is only reported. |
 | Restart after quarantining a running integration | off | Restarts Home Assistant at once when a quarantined new integration is already running. Off: the notification asks you to restart. |
-| Check Marketplace installs before they load | off | Installs the gate, which refuses what would be quarantined before its code runs (see above). |
+| Check Marketplace installs before they load | off | Installs the gate, which refuses what would be quarantined before its code runs (see above). Not needed when you installed the gate from the Marketplace. |
 | AI second opinion | off | Asks a Home Assistant AI Task to judge new and changed components and pre-checked repositories. |
 | AI Task, AI Task fallback | empty | Which AI Task entity to use (empty: the one Home Assistant prefers), and a second one if the first fails. |
 | Let AI trigger quarantine | off | Lets an AI verdict of *malicious* quarantine on its own. |
@@ -370,20 +383,31 @@ App gestoppt war), gilt sie als neu installiert.
 
 #### Riskante Marketplace-Installationen stoppen, bevor sie laden (optional)
 Die Gate schließt die Lücke oben: bevor etwas, das der Marketplace geschrieben hat, geladen werden kann, fragt sie
-Marketplace Guard.
+Marketplace Guard. Sie ist die kleine Integration *Marketplace Guard Gate*. Du bekommst sie auf einem von zwei Wegen,
+nicht auf beiden.
+
+**Aus dem Marketplace:** Einstellungen → Marketplace, **Marketplace Guard Gate** suchen und installieren. Ihr Repository
+heißt `marketplace-guard-gate` und liegt neben dem Repository dieser App, beim selben Konto; solange der Katalog des
+Marketplace es nicht führt, öffnet der Knopf in der README dieses Repositorys es in deinem Marketplace, der anbietet, es
+zuerst hinzuzufügen. Die Einrichtung öffnet sich direkt nach der Installation: sie prüft, dass diese App in deinem Home
+Assistant antwortet, und sagt sonst, was fehlt (zum Beispiel: die App starten). Der Marketplace aktualisiert sie wie
+jede andere Integration; Marketplace Guard lässt sie in Ruhe, auch mit der Option unten.
+
+**Aus dieser App:**
 
 1. Schalte im Tab **Konfiguration** **Marketplace-Installationen vor dem Laden prüfen** ein, speichere und starte die
-   App neu. Sie legt die kleine Integration *Marketplace Guard Gate* nach `custom_components` und schickt eine
-   Benachrichtigung mit einem Link.
+   App neu. Sie legt die Gate nach `custom_components` und schickt eine Benachrichtigung mit einem Link.
 2. Starte Home Assistant neu und füge dann die Integration **Marketplace Guard Gate** hinzu (der Link in der
    Benachrichtigung, oder Einstellungen → Geräte & Dienste → Integration hinzufügen).
-3. Das Attribut `marketplace_gate` des Status-Sensors zeigt innerhalb einer Minute `active`.
 
-Ein Update von Marketplace Guard bringt die neue Version der Gate mit; Home Assistant lädt sie beim nächsten Neustart,
-bis dahin prüft die Version davor weiter. Die laufende Gate bemerkt ihre neue Version innerhalb einer Minute und meldet
-Home Assistant, dass ein Neustart nötig ist, mit `marketplace_guard_gate` als Grund: Home Assistant zeigt das an, und
-eine Automation kann mit dem Auslöser oder der Bedingung *Neustart erforderlich* (`homeassistant.restart_required`) zu
-einer passenden Zeit neu starten. Eine Gate vor 2.5.0 kann das noch nicht; starte nach dem Update auf 2.5.0 einmal neu.
+Auf beiden Wegen zeigt das Attribut `marketplace_gate` des Status-Sensors innerhalb einer Minute `active`.
+
+Jede Version von Marketplace Guard bringt eine neue Version der Gate: aus dem Marketplace als Update der Gate, aus
+dieser App mit dem Update der App. Home Assistant lädt sie beim nächsten Neustart, bis dahin prüft die Version davor
+weiter. Die laufende Gate bemerkt ihre neue Version innerhalb einer Minute und meldet Home Assistant, dass ein Neustart
+nötig ist, mit `marketplace_guard_gate` als Grund: Home Assistant zeigt das an, und eine Automation kann mit dem
+Auslöser oder der Bedingung *Neustart erforderlich* (`homeassistant.restart_required`) zu einer passenden Zeit neu
+starten. Eine Gate vor 2.5.0 kann das noch nicht; starte nach dem Update auf 2.5.0 einmal neu.
 
 Ab dann wird nicht installiert, was Marketplace Guard quarantänieren würde: der Marketplace stellt den vorherigen Stand
 wieder her (bei einem Update die Version davor), sein Installationsdialog nennt den Grund, und eine Benachrichtigung
@@ -398,7 +422,8 @@ installiert), und wie lange gewartet wird (120 Sekunden).
 Die Gate hängt sich in einen internen Teil des Marketplace ein, den ein Home-Assistant-Update ändern kann. Dann startet
 die Gate nicht, eine Benachrichtigung sagt das, und `marketplace_gate` zeigt `not set up`; bis Marketplace Guard
 aktualisiert ist, prüfe Repositories vor der Installation vor. Zum Abschalten: die Integration Marketplace Guard Gate
-löschen, die Option ausschalten, `custom_components/marketplace_guard_gate` löschen und Home Assistant neu starten.
+löschen; dann die Gate im Marketplace entfernen, oder, wenn diese App sie installiert hat, die Option ausschalten und
+`custom_components/marketplace_guard_gate` löschen; Home Assistant neu starten.
 
 #### Ein Repository vor der Installation prüfen
 **Auf der Webseite:** `owner/repo` oder die GitHub-URL des Repositorys in das Feld eintragen und **Pre-check** wählen.
@@ -522,7 +547,7 @@ Die Standardwerte funktionieren ohne Änderung. Jede Option ist auch im Tab **Ko
 | Allowlist | leer | Komponenten (Ordnername) oder Repositories (`owner/repo`), die nie quarantäniert werden. Ein Repository zählt nur für Komponenten, die der Marketplace oder HACS installiert hat. |
 | Riskante Updates quarantänieren | an | Quarantäniert ein Update, das ein Risiko ab der Quarantäne-Schwelle mitbringt, das die Version davor nicht hatte. Die Integration fehlt dann nach dem nächsten Neustart, bis du eine Version installierst, der du vertraust. Aus: ein solches Update wird nur gemeldet. |
 | Neustart nach Quarantäne einer laufenden Integration | aus | Startet Home Assistant sofort neu, wenn eine quarantänierte neue Integration schon läuft. Aus: die Benachrichtigung bittet dich um den Neustart. |
-| Marketplace-Installationen vor dem Laden prüfen | aus | Installiert die Gate, die ablehnt, was quarantäniert würde, bevor sein Code läuft (siehe oben). |
+| Marketplace-Installationen vor dem Laden prüfen | aus | Installiert die Gate, die ablehnt, was quarantäniert würde, bevor sein Code läuft (siehe oben). Nicht nötig, wenn du die Gate aus dem Marketplace installiert hast. |
 | KI-Zweitmeinung | aus | Lässt eine AI-Task von Home Assistant neue und geänderte Komponenten und vorgeprüfte Repositories beurteilen. |
 | AI-Task, KI-Task-Fallback | leer | Welche AI-Task-Entität genutzt wird (leer: die, die Home Assistant bevorzugt), und eine zweite, falls die erste scheitert. |
 | KI darf Quarantäne auslösen | aus | Lässt ein KI-Urteil *malicious* allein quarantänieren. |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Repository checks for Marketplace Guard, with one exit code.
 
-    python3 tools/check.py          ADR index, Markdown links, add-on configuration
+    python3 tools/check.py          ADR index, Markdown links, add-on configuration, gate repository
     python3 tools/check.py --all    the same, plus the unit tests and tools/check_neutral.py: the gate before a push
 
 What each check looks at:
@@ -15,6 +15,11 @@ What each check looks at:
   every schema option is in DEFAULTS in guard.py, with the same value where options sets a default; the gate
   integration's manifest.json carries the version of config.yaml. It reads YAML with
   PyYAML; without PyYAML this check does not run and says how to install it.
+- gate-repo: what the Marketplace catalog, the HACS action and hassfest check in the gate repository tools/publish.py
+  makes (ADR-0045): the gate's manifest.json has the keys the catalog asks for, in hassfest's order, and no dependency
+  Home Assistant sets up itself (the manifest documentation's rule); brand/icon.png is a 256x256 PNG; translations/en.json exists; gate_repository/ has a
+  hacs.json with name and minimum version, a README.md with both publish markers, and a workflow that runs the HACS
+  action and hassfest without ignored checks.
 - unit-tests (--all): the add-on's tests in marketplace_guard/tests and the tests of these tools (tools/test_*.py).
 - site-neutral (--all): tools/check_neutral.py (ADR-0011).
 
@@ -333,6 +338,108 @@ def check_addon_config(root):
     return Result("addon-config", "ok", f"{len(schema)} options, translated in {', '.join(sorted(translations))}", [])
 
 
+# ---------------------------------------------------------------- the gate repository (ADR-0045)
+GATE = f"{ADDON}/gate/marketplace_guard_gate"
+GATE_FILES = "gate_repository"
+CATALOG_MANIFEST_KEYS = ("domain", "name", "codeowners", "documentation", "issue_tracker", "version")
+# The manifest documentation says not to list these as dependencies; hassfest itself accepted them on 2026-11-20
+SET_UP_BY_HOME_ASSISTANT = ("homeassistant", "persistent_notification")
+GATE_MARKERS = ("<!-- publish: install -->", "<!-- publish: marketplace -->")  # tools/publish.py fills them
+GATE_WORKFLOW_NEEDS = ("hacs/action@", "category: integration", "home-assistant/actions/hassfest@")
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _json_object(path):
+    """The JSON object in the file, or None when it is missing or holds none."""
+    if not os.path.isfile(path):
+        return None
+    try:  # parsing is the only way to know whether the file is valid JSON
+        data = json.loads(_read(path))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def png_size(path):
+    """(width, height) from a PNG's header, or None when the file is missing or no PNG."""
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        head = f.read(24)
+    if len(head) < 24 or not head.startswith(PNG_SIGNATURE) or head[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def gate_repository_problems(root):
+    """What the Marketplace catalog's review, the HACS action or hassfest would refuse in the gate repository that
+    tools/publish.py makes (ADR-0045), as far as it can be seen in this repository. A refusal there costs a release and
+    months in the review queue."""
+    problems = []
+    gate = os.path.join(root, *GATE.split("/"))
+    manifest = _json_object(os.path.join(gate, "manifest.json"))
+    if manifest is None:
+        problems.append("gate manifest.json: missing or not a JSON object")
+    else:
+        missing = [k for k in CATALOG_MANIFEST_KEYS if k not in manifest]
+        if missing:
+            problems.append(f"gate manifest.json lacks {', '.join(missing)}, which the catalog asks for")
+        keys = list(manifest)
+        head = [k for k in ("domain", "name") if k in manifest]
+        if keys != head + sorted(k for k in keys if k not in head):
+            problems.append("gate manifest.json: keys not in the order hassfest asks for (domain, name, then "
+                            "alphabetical)")
+        dependencies = manifest.get("dependencies", [])
+        bad = [d for d in dependencies if d in SET_UP_BY_HOME_ASSISTANT] if isinstance(dependencies, list) else []
+        if bad:
+            problems.append(f"gate manifest.json: {', '.join(bad)} in dependencies, which the manifest documentation "
+                            "says not to list (Home Assistant sets it up itself)")
+        for key in ("documentation", "issue_tracker"):
+            if key in manifest and not str(manifest[key]).startswith("https://"):
+                problems.append(f"gate manifest.json: {key} is not an https URL")
+        if "codeowners" in manifest and not isinstance(manifest["codeowners"], list):
+            problems.append("gate manifest.json: codeowners is not a list")
+    size = png_size(os.path.join(gate, "brand", "icon.png"))
+    if size != (256, 256):
+        found = "missing or not a PNG" if size is None else f"{size[0]}x{size[1]}"
+        problems.append(f"gate brand/icon.png: {found}; the catalog's brand check needs a 256x256 PNG")
+    if not os.path.isfile(os.path.join(gate, "translations", "en.json")):
+        problems.append("gate translations/en.json missing; a custom integration ships it complete")
+    hacs = _json_object(os.path.join(root, GATE_FILES, "hacs.json"))
+    if hacs is None:
+        problems.append(f"{GATE_FILES}/hacs.json: missing or not a JSON object")
+    else:
+        if not (isinstance(hacs.get("name"), str) and hacs["name"].strip()):
+            problems.append(f"{GATE_FILES}/hacs.json: no name, which the catalog requires")
+        if not re.fullmatch(r"\d{4}\.\d{1,2}\.\d+", str(hacs.get("homeassistant", ""))):
+            problems.append(f"{GATE_FILES}/hacs.json: homeassistant is not a version like 2026.11.0")
+    readme = os.path.join(root, GATE_FILES, "README.md")
+    if not os.path.isfile(readme):
+        problems.append(f"{GATE_FILES}/README.md missing")
+    else:
+        text = _read(readme)
+        problems += [f"{GATE_FILES}/README.md: no line `{m}` for tools/publish.py to fill"
+                     for m in GATE_MARKERS if not re.search(rf"^{re.escape(m)}$", text, re.M)]
+    workflow = os.path.join(root, GATE_FILES, ".github", "workflows", "validate.yml")
+    if not os.path.isfile(workflow):
+        problems.append(f"{GATE_FILES}/.github/workflows/validate.yml missing; the catalog asks for passing runs of "
+                        "the HACS action and hassfest")
+    else:
+        text = _read(workflow)
+        problems += [f"{GATE_FILES}/.github/workflows/validate.yml: no `{n}`" for n in GATE_WORKFLOW_NEEDS
+                     if n not in text]
+        if re.search(r"^\s*ignore\s*:", text, re.M):
+            problems.append(f"{GATE_FILES}/.github/workflows/validate.yml: the catalog does not accept ignored checks")
+    return problems
+
+
+def check_gate_repository(root):
+    problems = gate_repository_problems(root)
+    if problems:
+        return Result("gate-repo", "fail", f"{len(problems)} problem(s)", problems)
+    return Result("gate-repo", "ok", "manifest, icon, hacs.json, README markers and workflow as the catalog asks", [])
+
+
 # ---------------------------------------------------------------- unit tests and the site-neutral check
 def _run(cmd, cwd):
     proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -381,7 +488,7 @@ def main(argv):
         print("usage: python3 tools/check.py [--all]   (--all adds the unit tests and tools/check_neutral.py)",
               file=sys.stderr)
         return 2
-    checks = [check_adr_index, check_links, check_addon_config]
+    checks = [check_adr_index, check_links, check_addon_config, check_gate_repository]
     if "--all" in argv:
         checks += [check_unit_tests, check_site_neutral]
     results = [check(ROOT) for check in checks]

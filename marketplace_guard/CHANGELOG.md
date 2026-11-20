@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.6.0
+- **The gate from the Marketplace:** *Marketplace Guard Gate* is published as its own repository, so it can be
+  installed from Home Assistant's Marketplace. The Marketplace does not take repositories with apps, so the app itself
+  is still added as an app repository. Install the app first: the gate's setup checks that the app answers in this
+  Home Assistant and otherwise says what is missing. A gate installed from the Marketplace is updated by the
+  Marketplace, and Marketplace Guard leaves it alone, also with *Check Marketplace installs before they load* turned on
+  (ADR-0045).
+- **The app reports itself to the gate:** at its start and at every heartbeat it writes
+  `marketplace_guard/gate/app.json` in Home Assistant's configuration folder: its version, the request format it
+  speaks and the time.
+- **Status sensor:** `marketplace_gate` also says whether a gate installed from the Marketplace is `active`, without
+  the option.
+- **Gate:** it no longer names `persistent_notification` as a dependency (Home Assistant sets it up itself), and it
+  brings its own icon.
+
 ## 2.5.0
 - **Gate updates ask for the restart they need:** when an update of the app brings a new version of the gate, the gate
   that runs notices it within a minute and tells Home Assistant that a restart is required (with

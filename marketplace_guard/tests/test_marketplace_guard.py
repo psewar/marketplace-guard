@@ -1564,6 +1564,54 @@ class TestMarketplaceGate(GuardSandbox):
         self.components = ["marketplace", guard.GATE_DOMAIN]
         self.assertEqual(guard.gate_state(self.opts), "active")
 
+    def marketplace_installed_gate(self):
+        """The gate as the Marketplace installs it: its folder, and its repository in the Marketplace's records."""
+        storage = os.path.join(self.config, ".storage")
+        _storage(storage, "marketplace.repositories",
+                 {"1": {"full_name": "owner/marketplace-guard-gate", "category": "integration",
+                        "domain": guard.GATE_DOMAIN}})
+        self.opts["ha_storage"] = storage
+        dest = os.path.join(self.root, guard.GATE_DOMAIN)
+        _write(dest, "manifest.json", json.dumps({"domain": guard.GATE_DOMAIN, "version": "1.0.0"}))
+        return dest
+
+    def test_a_gate_the_marketplace_installed_is_never_replaced(self):
+        dest = self.marketplace_installed_gate()
+        self.opts["marketplace_gate"] = True
+        self.assertEqual(guard.install_gate(self.opts, self.worker.state), "marketplace")
+        with open(os.path.join(dest, "manifest.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["version"], "1.0.0")
+        self.assertNotIn(dest, self.worker.state)  # the watcher checks it like any other integration
+        self.assertNotIn("Marketplace Guard: gate installed", self.titles())
+
+    def test_a_gate_folder_is_asked_about_without_the_option(self):
+        self.marketplace_installed_gate()
+        self.assertEqual(guard.gate_state(self.opts), "not set up")
+        self.components = ["marketplace", guard.GATE_DOMAIN]
+        self.assertEqual(guard.gate_state(self.opts), "active")
+
+    def test_the_app_reports_itself_to_the_gate_at_the_start_and_the_heartbeat(self):
+        now = [1000.0]
+        worker = guard.Worker(self.opts, {"_last_scan": {}}, [self.root], clock=lambda: now[0], core=lambda: True)
+        worker.startup(True)
+        state, details = gatecore.app_presence(self.config)
+        self.assertEqual(state, "present")
+        self.assertEqual(details["version"], guard.app_version())
+        self.assertRegex(details["version"], r"^\d+\.\d+\.\d+$")
+        report = os.path.join(self.config, gatecore.GATE_DIR, gatecore.APP_REPORT)
+        with open(report, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["heartbeat_seconds"], worker.status_secs)
+        os.remove(report)
+        now[0] += worker.status_secs
+        worker.tick()
+        self.assertEqual(gatecore.app_presence(self.config)[0], "present")
+        self.assertEqual(guard.GATE_PROTOCOL, gatecore.PROTOCOL)
+
+    def test_a_report_that_cannot_be_written_does_not_stop_the_app(self):
+        _write(self.config, "marketplace_guard", "a file where the folder should be")
+        self.assertFalse(guard.write_app_report(self.opts, 900))
+        self.assertEqual(gatecore.app_presence(self.config)[0], "missing")
+
 
 def _storage(dirpath, key, data):
     os.makedirs(dirpath, exist_ok=True)

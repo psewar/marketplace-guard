@@ -177,6 +177,71 @@ class TestCopyWatch(unittest.TestCase):
                          r"^\d+\.\d+\.\d+$")
 
 
+class TestAppPresence(unittest.TestCase):
+    """The gate is set up only where the app answers; the app's own report says so (ADR-0045)."""
+
+    NOW = 1_800_000_000
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.config = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def report(self, text=None, **fields):
+        d = os.path.join(self.config, gatecore.GATE_DIR)
+        os.makedirs(d, exist_ok=True)
+        data = {"app": "marketplace_guard", "version": "2.6.0", "protocol": gatecore.PROTOCOL,
+                "heartbeat_seconds": 900, "ts": self.NOW - 60, **fields}
+        with open(os.path.join(d, gatecore.APP_REPORT), "w", encoding="utf-8") as f:
+            f.write(json.dumps(data) if text is None else text)
+
+    def presence(self):
+        return gatecore.app_presence(self.config, now=self.NOW)
+
+    def test_a_fresh_report_in_the_same_protocol_is_present(self):
+        self.report()
+        self.assertEqual(self.presence(), ("present", {"version": "2.6.0", "minutes": "1", "protocol": "1"}))
+
+    def test_without_a_report_the_app_is_missing(self):
+        self.assertEqual(self.presence(), ("missing", {}))
+
+    def test_a_report_older_than_two_heartbeats_and_the_grace_is_stale(self):
+        limit = 2 * 900 + gatecore.STALE_GRACE_SECONDS
+        self.report(ts=self.NOW - limit)
+        self.assertEqual(self.presence()[0], "present")
+        self.report(ts=self.NOW - limit - 1)
+        state, details = self.presence()
+        self.assertEqual(state, "stale")
+        self.assertEqual(details["minutes"], "32")
+
+    def test_another_protocol_is_incompatible(self):
+        self.report(protocol=gatecore.PROTOCOL + 1)
+        self.assertEqual(self.presence()[0], "incompatible")
+
+    def test_a_damaged_report_is_unreadable_not_present(self):
+        for text in ("not json", "[]", json.dumps({"protocol": "1", "heartbeat_seconds": 900, "ts": self.NOW}),
+                     json.dumps({"protocol": True, "heartbeat_seconds": 900, "ts": self.NOW}),
+                     json.dumps({"protocol": 1, "ts": self.NOW}), " " * (gatecore.MAX_APP_REPORT + 1)):
+            with self.subTest(text=text[:30]):
+                self.report(text)
+                self.assertEqual(self.presence(), ("unreadable", {}))
+
+    def test_a_short_heartbeat_still_gets_a_minute(self):
+        self.report(heartbeat_seconds=0, ts=self.NOW - 2 * 60 - gatecore.STALE_GRACE_SECONDS)
+        self.assertEqual(self.presence()[0], "present")
+
+    def test_the_abort_reasons_are_translated(self):
+        gate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gate", "marketplace_guard_gate")
+        for lang in ("en", "de"):
+            with open(os.path.join(gate, "translations", f"{lang}.json"), encoding="utf-8") as f:
+                abort = json.load(f)["config"]["abort"]
+            for state in ("missing", "unreadable", "stale", "incompatible"):
+                with self.subTest(lang=lang, state=state):
+                    self.assertIn(f"app_{state}", abort)
+
+
 class TestFindFunction(unittest.TestCase):
     """Home Assistant's restart flag is looked up before it is used; a version without it gets None, not an error."""
 

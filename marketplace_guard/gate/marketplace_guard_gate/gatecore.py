@@ -8,6 +8,9 @@ folders in Home Assistant's configuration folder and refuses what the app would 
 
 The app replaces the gate's own folder when it brings a new version; Home Assistant runs the new code only after a
 restart. CopyWatch notices that, so that Home Assistant's restart flag gets set (ADR-0044).
+
+The gate can also come from the Marketplace, without the app (ADR-0045). The app reports itself in APP_REPORT;
+app_presence() reads that report, so that the gate is set up only where the app answers.
 """
 import importlib
 import importlib.util
@@ -27,6 +30,10 @@ MAX_MANIFEST = 16 * 1024
 COPY_CHECK_SECONDS = 60
 # Home Assistant's latched "restart required" flag (since 2026.11.0, the first version with the Marketplace)
 RESTART_FLAG = ("homeassistant.helpers.system_state", "async_set_home_assistant_restart_required")
+APP_REPORT = "app.json"  # in GATE_DIR: the app's report of itself (ADR-0045)
+PROTOCOL = 1  # the request and answer format this gate speaks; the app names the one it speaks in its report
+MAX_APP_REPORT = 4096
+STALE_GRACE_SECONDS = 120  # on top of two heartbeats, before a report counts as old
 
 
 def wrap_check_methods(root, make_wrapper):
@@ -119,6 +126,40 @@ def outcome(answer, on_no_answer):
     verdict = str(answer.get("verdict") or "?").upper()
     return "refuse", (f"Marketplace Guard refused it before it could load ({verdict}): "
                       f"{answer.get('summary') or 'see its report'}")
+
+
+def app_presence(config_dir, now=None):
+    """Whether the Marketplace Guard app answers in this Home Assistant, from the report it writes at its start and at
+    every heartbeat (ADR-0045), as a fact: (state, details). state: "present" | "missing" (it never reported itself
+    here: not installed, or older than 2.6.0) | "unreadable" (the report is damaged) | "stale" (its last report is older
+    than two heartbeats and STALE_GRACE_SECONDS: the app is stopped) | "incompatible" (it speaks another protocol).
+    details: {"version", "minutes", "protocol"} as far as the report has them, as text for the messages."""
+    path = os.path.join(config_dir, GATE_DIR, APP_REPORT)
+    if not os.path.isfile(path):
+        return "missing", {}
+    try:  # the app replaces the report as a whole; the folder can go between the check above and the read
+        with open(path, encoding="utf-8") as f:
+            text = f.read(MAX_APP_REPORT + 1)
+    except OSError:
+        return "unreadable", {}
+    report = None
+    if len(text) <= MAX_APP_REPORT:
+        try:  # only parsing tells whether it is valid JSON
+            report = json.loads(text)
+        except ValueError:
+            report = None
+    fields = {"protocol": int, "heartbeat_seconds": (int, float), "ts": (int, float)}
+    if not (isinstance(report, dict) and all(isinstance(report.get(k), t) and not isinstance(report.get(k), bool)
+                                             for k, t in fields.items())):
+        return "unreadable", {}
+    age = (time.time() if now is None else now) - report["ts"]
+    details = {"version": str(report.get("version") or "?")[:40], "minutes": str(max(0, round(age / 60))),
+               "protocol": str(report["protocol"])}
+    if report["protocol"] != PROTOCOL:
+        return "incompatible", details
+    if age > 2 * max(60, report["heartbeat_seconds"]) + STALE_GRACE_SECONDS:
+        return "stale", details
+    return "present", details
 
 
 def find_function(module, name):
