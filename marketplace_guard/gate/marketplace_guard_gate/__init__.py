@@ -57,6 +57,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Wrap the Marketplace's content checks, or say why the gate is not active."""
+    # The Marketplace (a dependency in manifest.json) imported both modules before this entry is set up: on the event
+    # loop this is a lookup in sys.modules, not a file access.
     try:
         from homeassistant.components.marketplace.exceptions import MarketplaceError
         from homeassistant.components.marketplace.repositories import base
@@ -115,8 +117,10 @@ def _restart_required(hass: HomeAssistant, on_disk: str) -> None:
 async def _ask(hass: HomeAssistant, repository, settings: dict, error_cls) -> None:
     """Ask the app about the content just written; raise the Marketplace's own error to make it put back what was there."""
     name = repository.data.full_name
-    state, rid, payload = gatecore.build_request(hass.config.config_dir, str(repository.content.path.local), name,
-                                                 repository.data.category, repository.data.installed)
+    # Resolving the paths reads the disk: in the executor, like every file access of the gate (gatecore.FILE_ACCESS)
+    state, rid, payload = await hass.async_add_executor_job(
+        gatecore.build_request, hass.config.config_dir, str(repository.content.path.local), name,
+        repository.data.category, repository.data.installed)
     if state != "ok":
         raise error_cls(translation_domain="marketplace", translation_key="validation_failed",
                         translation_placeholders={"repository": name, "error": payload})

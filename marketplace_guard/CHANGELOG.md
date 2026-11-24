@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.2
+- **Gate:** where the content just written lies is worked out in Home Assistant's executor instead of its event loop.
+  Resolving the path reads the disk, so on a slow disk (an SD card, a configuration folder on the network) it could
+  stall all of Home Assistant while the install dialog waited. Found in the review for the Marketplace catalog. A test
+  now checks that the gate does no file access on the event loop. Home Assistant loads the new version of the gate at
+  its next restart.
+
 ## 2.6.1
 - **Gate:** its manifest names its Marketplace category, `security_safety`, so the Marketplace lists it there
   (ADR-0045). Nothing else changes; Home Assistant loads the new version of the gate at its next

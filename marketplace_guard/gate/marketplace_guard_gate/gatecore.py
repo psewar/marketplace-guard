@@ -34,6 +34,12 @@ APP_REPORT = "app.json"  # in GATE_DIR: the app's report of itself (ADR-0045)
 PROTOCOL = 1  # the request and answer format this gate speaks; the app names the one it speaks in its report
 MAX_APP_REPORT = 4096
 STALE_GRACE_SECONDS = 120  # on top of two heartbeats, before a report counts as old
+# What reads or writes the disk, or imports. Home Assistant calls these only through its executor
+# (hass.async_add_executor_job), never on its event loop, where a slow disk would stall all of Home Assistant; while
+# Python imports the gate it may, as that runs in an executor already (ADR-0044). test_gate.py checks that this list is
+# exactly what touches the disk here and that __init__.py and config_flow.py call none of it directly.
+FILE_ACCESS = frozenset({"build_request", "write_request", "read_answer", "withdraw_request", "app_presence",
+                         "find_function", "manifest_version", "CopyWatch.read"})
 
 
 def wrap_check_methods(root, make_wrapper):
@@ -67,7 +73,7 @@ def unwrap(done):
 
 def build_request(config_dir, local_path, repository, category, update):
     """The request for one written content: ("ok", id, payload), or ("refused", None, reason) when the content is not
-    inside the configuration folder (the app could not find it)."""
+    inside the configuration folder (the app could not find it). Resolving the paths reads the disk (FILE_ACCESS)."""
     rel = os.path.relpath(os.path.realpath(local_path), os.path.realpath(config_dir))
     if rel == os.curdir or rel.startswith(os.pardir) or os.path.isabs(rel):
         return "refused", None, f"{local_path} is not inside the configuration folder"

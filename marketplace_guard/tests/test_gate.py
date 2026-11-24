@@ -1,4 +1,5 @@
 """Tests for the gate's own logic (gate/marketplace_guard_gate/gatecore.py), standard library only (ADR-0042)."""
+import ast
 import asyncio
 import json
 import os
@@ -254,6 +255,99 @@ class TestFindFunction(unittest.TestCase):
         self.assertIsNone(gatecore.find_function("json", "__name__"))  # there, but not a function
         self.assertIsNone(gatecore.find_function("json.no_such_module", "x"))
         self.assertIsNone(gatecore.find_function("no_such_package_for_the_gate.helpers.system_state", "x"))
+
+
+GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gate", "marketplace_guard_gate")
+# What reads or writes the disk or imports, by its dotted name in the source
+FILE_PRIMITIVES = frozenset({
+    "open", "os.path.realpath", "os.path.isfile", "os.path.isdir", "os.path.exists", "os.path.getmtime", "os.stat",
+    "os.makedirs", "os.replace", "os.rename", "os.remove", "os.unlink", "os.listdir", "os.scandir", "os.walk",
+    "importlib.import_module", "importlib.util.find_spec"})
+
+
+def dotted(node):
+    """a.b.c for a chain of names and attributes, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([node.id, *reversed(parts)])
+
+
+def file_access_of(source):
+    """The functions of gatecore that touch the disk: those that call a primitive, or one of these, by name."""
+    calls = {}
+    for node in ast.parse(source).body:
+        defs = [(node.name, node)] if isinstance(node, ast.FunctionDef) else []
+        if isinstance(node, ast.ClassDef):
+            defs = [(f"{node.name}.{d.name}", d) for d in node.body if isinstance(d, ast.FunctionDef)]
+        for name, d in defs:
+            calls[name] = {dotted(c.func) for c in ast.walk(d) if isinstance(c, ast.Call)} - {None}
+    touching = {name for name, called in calls.items() if called & FILE_PRIMITIVES}
+    while True:
+        more = {name for name, called in calls.items() if name not in touching and any(
+            c in touching or c.split(".")[-1] in touching for c in called)}
+        if not more:
+            return touching
+        touching |= more
+
+
+def direct_file_access(source, listed):
+    """Calls inside a function of a Home Assistant module (all of which run on the event loop) to a primitive or to a
+    gatecore function that touches the disk, as "line: name". Passing such a function to the executor is not a call."""
+    methods = {name.split(".")[-1] for name in listed if "." in name}
+    found = []
+    for top in ast.parse(source).body:
+        if not isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue  # module level runs while Python imports the module: in an executor (ADR-0044)
+        for c in ast.walk(top):
+            name = dotted(c.func) if isinstance(c, ast.Call) else None
+            if name and (name in FILE_PRIMITIVES or (name.startswith("gatecore.") and name[9:] in listed)
+                         or ("." in name and name.split(".")[-1] in methods)):
+                found.append(f"{c.lineno}: {name}")
+    return found
+
+
+class TestEventLoop(unittest.TestCase):
+    """Home Assistant runs the gate's functions on its event loop: a disk access there stalls all of Home Assistant on
+    a slow disk. Every one goes through the executor (hass.async_add_executor_job)."""
+
+    def read(self, name):
+        with open(os.path.join(GATE, name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_the_list_names_exactly_what_touches_the_disk(self):
+        self.assertEqual(file_access_of(self.read("gatecore.py")), set(gatecore.FILE_ACCESS))
+
+    def test_home_assistant_modules_hand_disk_access_to_the_executor(self):
+        for name in ("__init__.py", "config_flow.py"):
+            with self.subTest(module=name):
+                self.assertEqual(direct_file_access(self.read(name), gatecore.FILE_ACCESS), [])
+
+    def test_a_direct_call_is_found_and_the_executor_is_not(self):
+        refused = ("async def ask(hass):\n"
+                   "    state = gatecore.build_request(hass.config.config_dir)\n"
+                   "    os.path.realpath('x')\n"
+                   "    watch.read()\n"
+                   "def notify(hass):\n"
+                   "    open('f')\n")
+        self.assertEqual(direct_file_access(refused, gatecore.FILE_ACCESS),
+                         ["2: gatecore.build_request", "3: os.path.realpath", "4: watch.read", "6: open"])
+        accepted = ("RUNNING = gatecore.manifest_version(HERE)\n"
+                    "async def ask(hass):\n"
+                    "    state = await hass.async_add_executor_job(gatecore.build_request, hass.config.config_dir)\n"
+                    "    await hass.async_add_executor_job(watch.read)\n"
+                    "    gatecore.outcome(None, 'refuse')\n")
+        self.assertEqual(direct_file_access(accepted, gatecore.FILE_ACCESS), [])
+
+    def test_a_function_calling_one_that_touches_the_disk_touches_it_too(self):
+        source = ("def reads():\n    return open('f')\n"
+                  "def via():\n    return reads()\n"
+                  "def pure():\n    return os.path.join('a', 'b')\n"
+                  "class Watch:\n    def read(self):\n        return via()\n    def judge(self):\n        return 1\n")
+        self.assertEqual(file_access_of(source), {"reads", "via", "Watch.read"})
 
 
 if __name__ == "__main__":

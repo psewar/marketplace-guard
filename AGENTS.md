@@ -14,7 +14,9 @@ Inside the add-on:
 - `gate/marketplace_guard_gate/` is the optional integration that runs inside Home Assistant and asks the add-on before
   Marketplace content can load
   ([ADR-0042](docs/adr/0042-an-optional-gate-checks-marketplace-installs-before-they-load.md)); its logic is in
-  `gatecore.py`, without Home Assistant imports, so it is tested like the rest. It is also published as its own
+  `gatecore.py`, without Home Assistant imports, so it is tested like the rest. Its file access runs in Home
+  Assistant's executor, never on the event loop: `gatecore.FILE_ACCESS` lists it, and `tests/test_gate.py` checks the
+  list and that `__init__.py` and `config_flow.py` call none of it directly. It is also published as its own
   repository for the Marketplace catalog, which refuses repositories with apps
   ([ADR-0045](docs/adr/0045-the-gate-is-published-as-its-own-repository-for-the-marketplace-catalog.md)).
 - `tests/` holds the unit tests; `tests/fixtures/` holds sample components for manual scans

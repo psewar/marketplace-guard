@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-20
 decision-makers: maintainer
 ---
@@ -126,4 +126,5 @@ before the submission. The first release, 2.6.0, passed both there with one warn
 2.6.1 adds. The table of categories in `tools/check.py` equals Home Assistant's own list in the hassfest image of
 2026-11-20, and hassfest warns there about an unknown category, but not about `security_safety`.
 
-Proposed on 2026-11-20.
+Proposed on 2026-11-20. Accepted by the maintainer on 2026-11-20; implemented in pull requests #52 (2.6.0) and #53
+(2.6.1).
